@@ -1,17 +1,18 @@
 {
   "name": "waljs",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "waljs is an efficient write-ahead log implementation for Node.js",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "scripts": {
     "build": "rm -rf dist && npx tsc -p tsconfig.build.json",
-    "format": "prettier --write \"lib/**/*.ts\" \"test/**/*.ts\"",
-    "lint": "npx eslint \"{lib,test}/**/*.ts\"",
-    "lint-fix": "npx eslint \"{lib,test}/**/*.ts\" --fix",
-    "test": "jest --config ./jest.json",
-    "prepare": "npm run build"
+    "format": "prettier --write \"lib/**/*.ts\" \"tests/**/*.ts\"",
+    "lint": "npx eslint \"{lib,tests}/**/*.ts\"",
+    "lint-fix": "npx eslint \"{lib,tests}/**/*.ts\" --fix",
+    "test": "jest --config ./jest.json -i",
+    "prepare": "npm run build",
+    "bench": "ts-node ./tests/__benchmark__/index.ts"
   },
   "repository": {
     "type": "git",
