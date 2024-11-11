@@ -28,7 +28,11 @@ export class WAL {
   // eslint-disable-next-line @typescript-eslint/no-empty-function
   private logger: (level: string, msg: string, attrs?: Record<string, unknown>) => void = () => {}; // noop
 
-  public isInitialized = false;
+  private _isInitialized = false;
+  public get isInitialized(): boolean {
+    return this._isInitialized;
+  }
+
   private isClosed = false;
 
   private syncWaiters: (() => void)[] = []; // List of resolve functions.
@@ -42,7 +46,7 @@ export class WAL {
   }
 
   async init(): Promise<void> {
-    if (this.isInitialized) {
+    if (this._isInitialized) {
       return;
     }
 
@@ -75,7 +79,7 @@ export class WAL {
       },
     );
 
-    this.isInitialized = true;
+    this._isInitialized = true;
   }
 
   public async write(entry: IEntry): Promise<number> {
@@ -113,7 +117,7 @@ export class WAL {
     await this.currSegmentWriter.close();
 
     this.currSegmentWriter = null;
-    this.isInitialized = false;
+    this._isInitialized = false;
   }
 
   private async loadSegmentFilesNames(): Promise<string[]> {
