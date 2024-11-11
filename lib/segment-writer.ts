@@ -95,6 +95,7 @@ export class SegmentWriter {
   // the associated writer or file.
   async close(): Promise<void> {
     await this.sync();
-    this.stream.close();
+    await new Promise((resolve) => this.stream.end(resolve));
+    await new Promise((resolve) => this.stream.close(resolve));
   }
 }

@@ -105,18 +105,16 @@ export class WAL {
       return;
     }
 
-    if (this.currSegmentWriter === null) {
-      // We never got a single write, so we can return immediately.
-      return;
+    if (this.currSegmentWriter !== null) {
+      await this.sync();
+
+      this.logger("debug", `Closing WAL at ${this.walFilePath}`);
+
+      await this.currSegmentWriter.close();
+
+      this.currSegmentWriter = null;
     }
 
-    await this.sync();
-
-    this.logger("debug", `Closing WAL at ${this.walFilePath}`);
-
-    await this.currSegmentWriter.close();
-
-    this.currSegmentWriter = null;
     this._isInitialized = false;
   }
 

@@ -35,3 +35,13 @@ export class TextEntry implements IEntry {
     return Buffer.concat([length, content]);
   }
 }
+
+export function createRandomString(length: number): string {
+  const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+  let res = "";
+  for (let i = 0; i < length; i++) {
+    res += charset.charAt(Math.floor(Math.random() * charset.length));
+  }
+
+  return res;
+}

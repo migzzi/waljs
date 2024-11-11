@@ -1,11 +1,11 @@
 import * as crc32 from "crc-32";
-import { mkdirSync, readdirSync, rmdirSync } from "fs";
+import fs, { mkdirSync, readdirSync } from "fs";
 import { open } from "fs/promises";
 import path from "path";
 import { EntryRegistry } from "../lib/entry-registry";
 import { SegmentWriter } from "../lib/segment-writer";
 import { WAL } from "../lib/wal";
-import { TextEntry } from "./utils";
+import { createRandomString, TextEntry } from "./utils";
 
 describe("Test WAL ops", () => {
   const dirs: string[] = [];
@@ -16,21 +16,17 @@ describe("Test WAL ops", () => {
 
   afterAll(() => {
     for (const dir of dirs) {
-      rmdirSync(dir, { recursive: true });
+      fs.rmSync(dir, { recursive: true });
     }
   });
 
   it("Should create new segments on first write if no segments exists", async () => {
-    const randomDirName = Math.random().toString(36).substring(7);
+    const randomDirName = createRandomString(10);
     const walDirPath = path.join(__dirname, randomDirName);
     dirs.push(walDirPath);
     mkdirSync(walDirPath);
 
-    const wal = new WAL(walDirPath, {
-      logger: (level, msg, meta) => {
-        console.log(msg);
-      },
-    });
+    const wal = new WAL(walDirPath);
 
     expect(wal.isInitialized).toBe(false);
 
@@ -50,7 +46,7 @@ describe("Test WAL ops", () => {
   });
 
   it("Should load from latest segment when prev segments exist", async () => {
-    const randomDirName = Math.random().toString(36).substring(7);
+    const randomDirName = createRandomString(10);
     const walDirPath = path.join(__dirname, randomDirName);
     dirs.push(walDirPath);
     mkdirSync(walDirPath);
@@ -72,11 +68,7 @@ describe("Test WAL ops", () => {
       await writer.close();
     }
 
-    const wal = new WAL(walDirPath, {
-      logger: (level, msg, meta) => {
-        console.log(msg);
-      },
-    });
+    const wal = new WAL(walDirPath);
 
     await wal.init();
     const segmentsExists = readdirSync(walDirPath);
@@ -96,15 +88,12 @@ describe("Test WAL ops", () => {
   });
 
   it("Should rollout new segment when max segment size is reached.", async () => {
-    const randomDirName = Math.random().toString(36).substring(7);
+    const randomDirName = createRandomString(10);
     const walDirPath = path.join(__dirname, randomDirName);
     dirs.push(walDirPath);
     mkdirSync(walDirPath);
 
     const wal = new WAL(walDirPath, {
-      logger: (level, msg, meta) => {
-        console.log(msg);
-      },
       maxSegmentSize: 1024,
     });
 
@@ -125,15 +114,12 @@ describe("Test WAL ops", () => {
   });
 
   it("Should write entries concurrently", async () => {
-    const randomDirName = Math.random().toString(36).substring(7);
+    const randomDirName = createRandomString(10);
     const walDirPath = path.join(__dirname, randomDirName);
     dirs.push(walDirPath);
     mkdirSync(walDirPath);
 
     const wal = new WAL(walDirPath, {
-      logger: (level, msg, meta) => {
-        // console.log(msg);
-      },
       maxSegmentSize: 10 * 1024,
     });
 
@@ -143,7 +129,7 @@ describe("Test WAL ops", () => {
     await Promise.all(
       Array.from({ length: 10000 }, (_, i) => {
         return wal.write(TextEntry.from(`test-${i}`));
-      })
+      }),
     );
 
     expect(wal.getCurrentSegmentID()).toBeGreaterThan(0);
