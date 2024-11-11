@@ -1,28 +1,4 @@
-import { ReadStream } from "fs";
-
 export type EntryType = number;
-
-// class WALEntry {
-//   constructor(
-//     private offset: number,
-//     private type: EntryType,
-//     private checksum: string,
-//     private data: Buffer
-//   ) {}
-
-//   toString(): string {
-//     return this.data.toString();
-//   }
-
-//   fromBuffer(buf: Buffer): WALEntry {
-//     const offset = buf.readUInt32BE(0);
-//     const type = buf.readUInt8(4);
-//     const checksum = buf.subarray(5, 9).toString("hex");
-//     const data = buf.subarray(9);
-
-//     return new WALEntry(offset, this.typeFromNumber(type), checksum, data);
-//   }
-// }
 
 export interface IEntry {
   type(): EntryType;

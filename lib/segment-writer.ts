@@ -14,13 +14,13 @@ import { WriteStream } from "fs";
 //		- CRC = 32bit hash computed over the payload using CRC
 //		- Payload = The actual WAL entry payload data
 export class SegmentWriter {
-  private _size: number = 0;
+  private _size = 0;
   get size(): number {
     return this._size;
   }
 
-  private currBatchSize: number = 0;
-  private currBatchIndex: number = 0;
+  private currBatchSize = 0;
+  private currBatchIndex = 0;
 
   private stream: WriteStream;
 
@@ -35,7 +35,7 @@ export class SegmentWriter {
       // Buffer size for writing WAL entries. This is used to batch writes to the
       // underlying writer.
       bufferSize: number;
-    }
+    },
   ) {
     this.opts = opts || { maxSegmentSize: 4 * 1024, bufferSize: 4 * 1024 };
     this.stream = writer;
@@ -46,12 +46,7 @@ export class SegmentWriter {
   // Note, that we do not use the Entry interface here because encoding the
   // payload is done at an earlier stage than actually writing data to the WAL
   // segment.
-  async write(
-    offset: number,
-    typ: number,
-    checksum: number,
-    payload: Buffer
-  ): Promise<void> {
+  async write(offset: number, typ: number, checksum: number, payload: Buffer): Promise<void> {
     const header = Buffer.alloc(9);
 
     header.writeUInt32BE(offset, 0);
@@ -83,7 +78,7 @@ export class SegmentWriter {
       return;
     }
 
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve) => {
       const corked = this.corked;
       this.corked = 0;
 

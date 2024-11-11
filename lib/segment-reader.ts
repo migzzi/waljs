@@ -1,8 +1,7 @@
 import * as crc32 from "crc-32";
-import { IEntry, EntryType, Reader } from "./entry";
-import { EntryRegistry } from "./entry-registry";
-import { ReadStream } from "fs";
 import { FileHandle } from "fs/promises";
+import { EntryType, IEntry, Reader } from "./entry";
+import { EntryRegistry } from "./entry-registry";
 
 // The SegmentReader is responsible for reading WAL entries from their binary
 // representation, typically from disk. It is used by the WAL to automatically
@@ -88,9 +87,7 @@ export class SegmentReader {
     }
 
     if (this.checksum !== crc32.buf(this.payload) >>> 0) {
-      throw new Error(
-        `Detected WAL Entry corruption at WAL offset ${this.offset}`
-      );
+      throw new Error(`Detected WAL Entry corruption at WAL offset ${this.offset}`);
     }
 
     this._entry.decode(this.payload);
