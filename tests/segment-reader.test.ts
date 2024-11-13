@@ -1,12 +1,11 @@
-import { ReadStream, unlinkSync } from "fs";
+import * as crc32 from "crc-32";
+import { unlinkSync } from "fs";
 import { open } from "fs/promises";
 import path from "path";
-import { SegmentWriter } from "../lib/segment-writer";
-import { SegmentReader } from "../lib/segment-reader";
 import { EntryRegistry } from "../lib/entry-registry";
-import { IEntry, Reader } from "../lib/entry";
-import * as crc32 from "crc-32";
-import { TextEntry } from "./utils";
+import { SegmentReader } from "../lib/segment-reader";
+import { SegmentWriter } from "../lib/segment-writer";
+import { createRandomString, TextEntry } from "./utils";
 
 describe("Test segment reader ops", () => {
   const files: string[] = [];
@@ -22,13 +21,12 @@ describe("Test segment reader ops", () => {
   });
 
   it("Should read single line from segment", async () => {
-    const randomName = Math.random().toString(36).substring(7);
+    const randomName = createRandomString(10);
     const filePath = path.join(__dirname, `${randomName}.wal`);
     files.push(filePath);
     const wfile = await open(filePath, "a+");
-    const rfile = await open(filePath, "r");
 
-    const writer = new SegmentWriter(wfile.createWriteStream());
+    const writer = new SegmentWriter(wfile);
     const typ = 0;
 
     const entry = new TextEntry();
@@ -42,6 +40,7 @@ describe("Test segment reader ops", () => {
 
     await writer.sync();
 
+    const rfile = await open(filePath, "r");
     const reader = new SegmentReader(rfile);
 
     const isRead = await reader.readNext();
@@ -55,16 +54,19 @@ describe("Test segment reader ops", () => {
     reader.decode();
 
     expect((reader.entry as TextEntry).content).toBe("test");
+
+    await wfile.close();
+    await rfile.close();
   });
 
   it("Should throw if invalid checksum", async () => {
-    const randomName = Math.random().toString(36).substring(7);
+    const randomName = createRandomString(10);
     const filePath = path.join(__dirname, `${randomName}.wal`);
     files.push(filePath);
     const wfile = await open(filePath, "a+");
     const rfile = await open(filePath, "r");
 
-    const writer = new SegmentWriter(wfile.createWriteStream());
+    const writer = new SegmentWriter(wfile);
     const typ = 0;
 
     const entry = new TextEntry();
@@ -73,8 +75,6 @@ describe("Test segment reader ops", () => {
 
     const encoded = entry.encode();
     const checksum = crc32.str("test") >>> 0;
-
-    console.log(checksum);
 
     await writer.write(0, typ, checksum, encoded);
 
@@ -95,16 +95,19 @@ describe("Test segment reader ops", () => {
     } catch (e) {
       expect(e.message).toBe("Detected WAL Entry corruption at WAL offset 0");
     }
+
+    await wfile.close();
+    await rfile.close();
   });
 
   it("Should throw if invalid entry type", async () => {
-    const randomName = Math.random().toString(36).substring(7);
+    const randomName = createRandomString(10);
     const filePath = path.join(__dirname, `${randomName}.wal`);
     files.push(filePath);
     const wfile = await open(filePath, "a+");
     const rfile = await open(filePath, "r");
 
-    const writer = new SegmentWriter(wfile.createWriteStream());
+    const writer = new SegmentWriter(wfile);
     const typ = 1;
 
     const entry = new TextEntry();
@@ -125,16 +128,19 @@ describe("Test segment reader ops", () => {
     } catch (e) {
       expect(e.message).toBe("Invalid entry type");
     }
+
+    await wfile.close();
+    await rfile.close();
   });
 
   it("Should throw when calling decode before readNext", async () => {
-    const randomName = Math.random().toString(36).substring(7);
+    const randomName = createRandomString(10);
     const filePath = path.join(__dirname, `${randomName}.wal`);
     files.push(filePath);
     const wfile = await open(filePath, "a+");
     const rfile = await open(filePath, "r");
 
-    const writer = new SegmentWriter(wfile.createWriteStream());
+    const writer = new SegmentWriter(wfile);
     const typ = 0;
 
     const entry = new TextEntry();
@@ -155,16 +161,18 @@ describe("Test segment reader ops", () => {
     } catch (e) {
       expect(e.message).toBe("Must call SegmentReader.readNext() first");
     }
+
+    await wfile.close();
+    await rfile.close();
   });
 
   it("Seek end of file", async () => {
-    const randomName = Math.random().toString(36).substring(7);
+    const randomName = createRandomString(10);
     const filePath = path.join(__dirname, `${randomName}.wal`);
     files.push(filePath);
     const wfile = await open(filePath, "a+");
-    const rfile = await open(filePath, "r");
 
-    const writer = new SegmentWriter(wfile.createWriteStream());
+    const writer = new SegmentWriter(wfile);
     const typ = 0;
 
     for (let i = 0; i < 10; i++) {
@@ -180,6 +188,7 @@ describe("Test segment reader ops", () => {
 
     await writer.sync();
 
+    const rfile = await open(filePath, "r");
     const reader = new SegmentReader(rfile);
 
     const lastOffset = await reader.seekEnd();
@@ -187,5 +196,8 @@ describe("Test segment reader ops", () => {
     // const isRead = await reader.readNext();
 
     expect(lastOffset).toBe(9);
+
+    await wfile.close();
+    await rfile.close();
   });
 });

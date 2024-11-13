@@ -1,9 +1,10 @@
-import { readFileSync, statSync, unlinkSync, writeFileSync } from "fs";
+import { readFileSync, unlinkSync } from "fs";
 import path from "path";
 import { SegmentWriter } from "../lib/segment-writer";
 
-import { open } from "fs/promises";
 import { createHash } from "crypto";
+import { open } from "fs/promises";
+import { createRandomString } from "./utils";
 
 describe("Test segment writer ops", () => {
   const files: string[] = [];
@@ -15,11 +16,11 @@ describe("Test segment writer ops", () => {
   });
 
   it("Should write single line to segment", async () => {
-    const randomName = Math.random().toString(36).substring(7);
+    const randomName = createRandomString(10);
     const filePath = path.join(__dirname, `${randomName}.wal`);
     files.push(filePath);
     const file = await open(filePath, "a+");
-    const writer = new SegmentWriter(file.createWriteStream());
+    const writer = new SegmentWriter(file);
     const offset = 0;
     const typ = 0;
     const checksum = 0;
@@ -30,10 +31,7 @@ describe("Test segment writer ops", () => {
     await writer.sync();
 
     const content = readFileSync(filePath);
-    const expected = Buffer.concat([
-      Buffer.from([0, 0, 0, 0, 0, 0, 0, 0, 0]),
-      payload,
-    ]);
+    const expected = Buffer.concat([Buffer.from([0, 0, 0, 0, 0, 0, 0, 0, 0]), payload]);
 
     expect(content).toEqual(expected);
 
@@ -41,11 +39,11 @@ describe("Test segment writer ops", () => {
   });
 
   it("Should write multiple lines to segment", async () => {
-    const randomName = Math.random().toString(36).substring(7);
+    const randomName = createRandomString(10);
     const filePath = path.join(__dirname, `${randomName}.wal`);
     files.push(filePath);
     const file = await open(filePath, "a+");
-    const writer = new SegmentWriter(file.createWriteStream());
+    const writer = new SegmentWriter(file);
     const offset = 0;
     const typ = 0;
     const checksum = 0;
@@ -70,14 +68,16 @@ describe("Test segment writer ops", () => {
     ]);
 
     expect(content).toEqual(expected);
+
+    await writer.close();
   });
 
   it("Test correct file size", async () => {
-    const randomName = Math.random().toString(36).substring(7);
+    const randomName = createRandomString(10);
     const filePath = path.join(__dirname, `${randomName}.wal`);
     files.push(filePath);
     const file = await open(filePath, "a+");
-    const writer = new SegmentWriter(file.createWriteStream());
+    const writer = new SegmentWriter(file);
     const offset = 0;
     const typ = 0;
     const checksum = 0;
@@ -91,20 +91,20 @@ describe("Test segment writer ops", () => {
 
     await writer.sync();
 
-    expect(writer.size).toBe(
-      9 + payload1.length + 9 + payload2.length + 9 + payload3.length
-    );
+    expect(writer.size).toBe(9 + payload1.length + 9 + payload2.length + 9 + payload3.length);
 
-    const stat = statSync(filePath);
-    expect(stat.size).toBe(writer.size);
+    const stat = readFileSync(filePath);
+    expect(stat.length).toBe(writer.size);
+
+    await writer.close();
   });
 
   it("Test close - should flush", async () => {
-    const randomName = Math.random().toString(36).substring(10);
+    const randomName = createRandomString(10);
     const filePath = path.join(__dirname, `${randomName}.wal`);
     files.push(filePath);
     const file = await open(filePath, "a+");
-    const writer = new SegmentWriter(file.createWriteStream());
+    const writer = new SegmentWriter(file);
     const offset = 0;
     const typ = 0;
     const checksum = 0;
@@ -132,11 +132,11 @@ describe("Test segment writer ops", () => {
   });
 
   it("Write large number of entries.", async () => {
-    const randomName = Math.random().toString(36).substring(7);
+    const randomName = createRandomString(10);
     const filePath = path.join(__dirname, `${randomName}.wal`);
     files.push(filePath);
     const file = await open(filePath, "a+");
-    const writer = new SegmentWriter(file.createWriteStream());
+    const writer = new SegmentWriter(file);
     const typ = 0;
     const checksum = 0;
 
@@ -157,7 +157,7 @@ describe("Test segment writer ops", () => {
         header.writeUInt8(typ, 4);
         header.writeUInt32BE(checksum, 5);
         return Buffer.concat([header, Buffer.from("test" + i)]);
-      })
+      }),
     );
 
     // writeFileSync(path.join(__dirname, "expected.wal"), expected);
@@ -182,5 +182,7 @@ describe("Test segment writer ops", () => {
     const fileHash = createHash("sha1").update(content).digest("hex");
     const expectedHash = createHash("sha1").update(expected).digest("hex");
     expect(fileHash).toBe(expectedHash);
+
+    await writer.close();
   });
 });

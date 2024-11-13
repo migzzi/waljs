@@ -1,8 +1,10 @@
 import * as crc32 from "crc-32";
+import { createHash } from "crypto";
 import fs, { mkdirSync, readdirSync } from "fs";
 import { open } from "fs/promises";
 import path from "path";
 import { EntryRegistry } from "../lib/entry-registry";
+import { SegmentReader } from "../lib/segment-reader";
 import { SegmentWriter } from "../lib/segment-writer";
 import { WAL } from "../lib/wal";
 import { createRandomString, TextEntry } from "./utils";
@@ -54,7 +56,7 @@ describe("Test WAL ops", () => {
     // Generate fake segments.
     for (let i = 0; i < 5; i++) {
       const file = await open(path.join(walDirPath, `${i}.wal`), "a+");
-      const writer = new SegmentWriter(file.createWriteStream());
+      const writer = new SegmentWriter(file);
 
       const baseOffset = i * 100;
       // write 100 entries
@@ -136,5 +138,36 @@ describe("Test WAL ops", () => {
     expect(wal.getLastOffset()).toBe(10000);
 
     await wal.close();
+
+    const expectedContent = Buffer.concat(
+      Array.from({ length: 10000 }, (_, i) => TextEntry.from(`test-${i}`).encode()),
+    );
+
+    const segmentsExists = readdirSync(walDirPath).sort((a, b) => parseInt(a) - parseInt(b));
+    const content = await Promise.all(
+      segmentsExists.map(async (segment) => {
+        const file = await open(path.join(walDirPath, segment), "r");
+        const reader = new SegmentReader(file);
+
+        const entries: Buffer[] = [];
+        while (true) {
+          const isRead = await reader.readNext();
+          if (!isRead) {
+            break;
+          }
+
+          reader.decode();
+          entries.push(reader.entry.encode());
+        }
+
+        return Buffer.concat(entries);
+      }),
+    );
+    const allContent = Buffer.concat(content);
+
+    const expectedHash = createHash("sha1").update(expectedContent).digest("hex");
+    const actualHash = createHash("sha1").update(allContent).digest("hex");
+
+    expect(actualHash).toEqual(expectedHash);
   });
 });

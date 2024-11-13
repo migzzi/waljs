@@ -1,6 +1,5 @@
 import { Mutex } from "async-mutex";
 import * as crc32 from "crc-32";
-import EventEmitter from "events";
 import * as fs from "fs/promises";
 import * as glob from "glob";
 import path from "path";
@@ -12,6 +11,7 @@ type WALOptions = {
   logger?: (level: string, msg: string, attrs?: Record<string, unknown>) => void;
   maxSegmentSize?: number;
   onSync?: (() => void)[];
+  // syncDelay?: number;
 };
 
 export class WAL {
@@ -22,6 +22,7 @@ export class WAL {
 
   private maxSegmentSize: number = 10 * 1024 * 1024; // 10MB
   private onSync: (() => void)[] = [];
+  private syncDelay = 0;
 
   private writeLock = new Mutex();
 
@@ -36,13 +37,15 @@ export class WAL {
   private isClosed = false;
 
   private syncWaiters: (() => void)[] = []; // List of resolve functions.
+  private isSyncOngoing = false;
 
-  private emitter: EventEmitter = new EventEmitter();
+  // private emitter: EventEmitter = new EventEmitter();
 
   constructor(private walFilePath: string, opts?: WALOptions) {
     this.logger = opts?.logger || this.logger;
     this.maxSegmentSize = opts?.maxSegmentSize || this.maxSegmentSize;
     this.onSync = opts?.onSync || this.onSync;
+    // this.syncDelay = opts?.syncDelay || this.syncDelay;
   }
 
   async init(): Promise<void> {
@@ -88,7 +91,13 @@ export class WAL {
     const encodedEntry = entry.encode();
     const checksum = crc32.buf(encodedEntry) >>> 0;
 
+    const p = new Promise<void>((resolve) => {
+      this.syncWaiters.push(resolve);
+    });
+
     const offset = await this.writeLock.runExclusive(() => this.doWrite(entry.type(), checksum, encodedEntry));
+
+    await p;
 
     // Update the last offset.
 
@@ -99,23 +108,25 @@ export class WAL {
   // writes are completed and synced to disk before then closing the WAL segment file.
   // Any future writes after the WAL has been closed will lead to an error.
   public async close(): Promise<void> {
-    this.isClosed = true;
+    await this.writeLock.runExclusive(async () => {
+      this.isClosed = true;
 
-    if (!this.isInitialized) {
-      return;
-    }
+      if (!this.isInitialized) {
+        return;
+      }
 
-    if (this.currSegmentWriter !== null) {
-      await this.sync();
+      if (this.currSegmentWriter !== null) {
+        await this.sync();
 
-      this.logger("debug", `Closing WAL at ${this.walFilePath}`);
+        this.logger("debug", `Closing WAL at ${this.walFilePath}`);
 
-      await this.currSegmentWriter.close();
+        await this.currSegmentWriter.close();
 
-      this.currSegmentWriter = null;
-    }
+        this.currSegmentWriter = null;
+      }
 
-    this._isInitialized = false;
+      this._isInitialized = false;
+    });
   }
 
   private async loadSegmentFilesNames(): Promise<string[]> {
@@ -138,7 +149,7 @@ export class WAL {
     const segmentReader = new SegmentReader(file);
     this.lastOffset = await segmentReader.seekEnd();
 
-    return new SegmentWriter(file.createWriteStream());
+    return new SegmentWriter(file);
   }
 
   private async doWrite(type: EntryType, checksum: number, payload: Buffer): Promise<number> {
@@ -169,8 +180,9 @@ export class WAL {
     await this.currSegmentWriter.write(offset, type, checksum, payload);
     this.lastOffset = offset;
 
-    // this.scheduleSync();
-    await this.sync();
+    this.scheduleSync();
+
+    // await this.sync();
 
     return offset;
   }
@@ -185,7 +197,6 @@ export class WAL {
 
     if (this.currSegmentWriter !== null) {
       // Sync all pending writes before rolling over to a new segment.
-      await this.currSegmentWriter.sync();
       await this.currSegmentWriter.close();
     }
 
@@ -197,7 +208,7 @@ export class WAL {
       maxSegmentSize: this.maxSegmentSize,
     });
 
-    this.currSegmentWriter = new SegmentWriter(this.currSegmentFile.createWriteStream());
+    this.currSegmentWriter = new SegmentWriter(this.currSegmentFile);
 
     return;
   }
@@ -225,7 +236,30 @@ export class WAL {
 
     this.syncWaiters = [];
 
-    this.emitter.emit("sync");
+    // this.emitter.emit("sync");
+  }
+
+  private scheduleSync(): void {
+    if (!!this.isSyncOngoing) {
+      return;
+    }
+    this.isSyncOngoing = true;
+
+    if (this.syncDelay > 0) {
+      setTimeout(() => {
+        this.writeLock.runExclusive(async () => {
+          await this.sync();
+          this.isSyncOngoing = false;
+        });
+      }, this.syncDelay);
+
+      return;
+    }
+
+    this.writeLock.runExclusive(async () => {
+      await this.sync();
+      this.isSyncOngoing = false;
+    });
   }
 
   getCurrentSegmentID(): number {
