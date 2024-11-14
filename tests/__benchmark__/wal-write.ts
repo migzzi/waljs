@@ -1,9 +1,9 @@
+/* eslint-disable @typescript-eslint/naming-convention */
 import benny from "benny";
-import { WAL } from "../../lib/wal";
-import path from "path";
-import { createRandomString, TextEntry } from "../utils";
-import { rm } from "fs/promises";
 import { existsSync, mkdirSync, rmSync } from "fs";
+import path from "path";
+import { WAL } from "../../lib/wal";
+import { createRandomString, TextEntry } from "../utils";
 
 if (existsSync(path.join(__dirname, "wal"))) {
   rmSync(path.join(__dirname, "wal"), { recursive: true });
