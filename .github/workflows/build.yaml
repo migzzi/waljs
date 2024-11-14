@@ -1,0 +1,49 @@
+name: CI Build & Testing
+
+
+on:
+  push:
+    branches:
+      - 'release/**'
+      - main
+  pull_request:
+      branches:
+        - 'release/**'
+        - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+      - name: Use NodeJS 18
+        uses: actions/setup-node@v2
+        with:
+          node-version: 18
+
+      - name: Install Deps
+        run: npm install
+
+      - name: Run Build
+        run: npm run build
+
+      - name: Run Tests
+        run: npm run test -- --forceExit
+
+
+  lint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+      - name: Use NodeJS 16
+        uses: actions/setup-node@v2
+        with:
+          node-version: 16
+
+      - name: Install Deps
+        run: npm install
+
+      - name: Run Linting
+        run: npm run lint
