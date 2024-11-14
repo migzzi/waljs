@@ -21,6 +21,8 @@ The main goal of a Write-ahead Log (WAL) is to make the application more durable
     - [WAL write](#wal-write)
   - [Contributing](#contributing)
   - [Versioning](#versioning)
+  - [Acknowledgments](#acknowledgments)
+  - [What's next?](#whats-next)
 
 ## Installation
 
@@ -117,7 +119,7 @@ These benchmarks are run on a machine with the following specifications:
 
 | name                       | ops     | margin | percentSlower |
 | -------------------------- | ------- | ------ | ------------- |
-| WAL write with sync        | 55607   | 4.7    | 0             |
+| WAL write with sync        | 55607   | +-4.7% | 0             |
 
 ## Contributing
 
@@ -130,3 +132,14 @@ THIS SOFTWARE IS STILL IN ALPHA AND THERE ARE NO GUARANTEES REGARDING API STABIL
 All significant (e.g. breaking) changes are documented in the [CHANGELOG.md](CHANGELOG.md).
 
 After the v1.0 release we plan to use SemVer for versioning. For the versions available, see the releases page.
+
+## Acknowledgments
+
+This work was inspired by the [WAL implementation in Go by fgrosse](https://github.com/fgrosse/wal).
+
+## What's next?
+
+- [ ] Add support for WAL compaction
+- [ ] Add support for WAL replication
+- [ ] Add support for WAL encryption
+- [ ] Add support for WAL compression
