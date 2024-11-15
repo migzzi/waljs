@@ -1,7 +1,7 @@
 {
-  "name": "wal",
+  "name": "@zamurai/wal",
   "version": "0.1.0",
-  "description": "wal is an efficient write-ahead log implementation for Node.js",
+  "description": "@zamurai/wal is an efficient write-ahead log implementation for Node.js",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -16,7 +16,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/migzzi/quewi.git"
+    "url": "git+https://github.com/migzzi/waljs.git"
   },
   "keywords": [
     "wal",

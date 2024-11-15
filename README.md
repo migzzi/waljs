@@ -139,6 +139,7 @@ This work was inspired by the [WAL implementation in Go by fgrosse](https://gith
 
 ## What's next?
 
+- [ ] Add support for WAL Recovery
 - [ ] Add support for WAL compaction
 - [ ] Add support for WAL replication
 - [ ] Add support for WAL encryption
