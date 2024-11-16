@@ -4,7 +4,7 @@ import * as fs from "fs/promises";
 import * as glob from "glob";
 import path from "path";
 import { EntryType, IEntry } from "./entry";
-import { MetaFileManager } from "./meta-manager";
+import { MetaFileManager, MetaManagerOptions } from "./meta-manager";
 import { SegmentWriter } from "./segment-writer";
 import { SegmentReader } from "./segment-reader";
 
@@ -12,6 +12,7 @@ type WALOptions = {
   logger?: (level: string, msg: string, attrs?: Record<string, unknown>) => void;
   maxSegmentSize?: number;
   onSync?: (() => void)[];
+  meta?: MetaManagerOptions;
   // syncDelay?: number;
 };
 
@@ -21,6 +22,7 @@ export class WAL {
   private currSegmentID = -1;
   // private lastOffset = 0;
   private metaManager: MetaFileManager;
+  private metaManagerOpts: MetaManagerOptions;
 
   private maxSegmentSize: number = 10 * 1024 * 1024; // 10MB
   private onSync: (() => void)[] = [];
@@ -47,6 +49,7 @@ export class WAL {
     this.logger = opts?.logger || this.logger;
     this.maxSegmentSize = opts?.maxSegmentSize || this.maxSegmentSize;
     this.onSync = opts?.onSync || this.onSync;
+    this.metaManagerOpts = opts?.meta;
     // this.syncDelay = opts?.syncDelay || this.syncDelay;
   }
 
@@ -215,7 +218,7 @@ export class WAL {
 
     this.logger("debug", "Loading existing meta file.");
 
-    this.metaManager = new MetaFileManager(await fs.open(metaFilePath, "r+"));
+    this.metaManager = new MetaFileManager(await fs.open(metaFilePath, "r+"), this.metaManagerOpts);
 
     await this.metaManager.init();
   }

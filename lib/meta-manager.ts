@@ -16,9 +16,9 @@ const INDEX_SIZE = 8;
     Layout:      
         Every Entry is written, using the following binary layout (big endian format):
     
-    	  ┌──────────────────┬───────────┬───────────┬─────────────┬───────────────────┐
-    	  │ File Marker (4B) │ Base (4B) │ Head (4B) │ Commit (4B) │ ...Index (8B)     │
-    	  └──────────────────┴───────────┴───────────┴─────────────┴───────────────────┘
+          ┌──────────────────┬───────────┬───────────┬─────────────┬───────────────────┐
+          │ File Marker (4B) │ Base (4B) │ Head (4B) │ Commit (4B) │ ...Index (8B)     │
+          └──────────────────┴───────────┴───────────┴─────────────┴───────────────────┘
     
         - File Marker = 32bit - WAL entry number for each record in order to implement a low-water mark
         - Base        = 32Bit - The base offset of the indexes. 0 most of the time. Base is only meaningful when indexes are split across many meta files so are a placeholder for future work.
@@ -37,13 +37,28 @@ const INDEX_SIZE = 8;
 
     
  */
-
 export class MetaFileManager {
   private metaFile: FileHandle;
   private header: Buffer = null;
 
-  constructor(metaFile: FileHandle) {
+  private updatesQueue: Buffer[] = null;
+  private updatesQueueFileOffset = 0;
+  private isBufferingEnabled = true;
+  private maxBufferSize = 1024;
+  private autoSyncInterval = 1000;
+  private syncTimer: NodeJS.Timeout = null;
+
+  constructor(metaFile: FileHandle, opts?: MetaManagerOptions) {
     this.metaFile = metaFile;
+    this.isBufferingEnabled = opts?.bufferingEnabled ?? true;
+
+    if (this.isBufferingEnabled) {
+      this.updatesQueue = [];
+      this.maxBufferSize = opts?.maxBufferSize ?? 1024;
+      this.autoSyncInterval = opts?.autoSyncInterval ?? 1000;
+
+      this.startAutoSync();
+    }
   }
 
   async init(): Promise<void> {
@@ -69,7 +84,13 @@ export class MetaFileManager {
       return;
     }
 
+    if (this.syncTimer) {
+      clearInterval(this.syncTimer);
+    }
+
+    await this.sync();
     await this.metaFile.close();
+
     this.header = null;
   }
 
@@ -109,7 +130,9 @@ export class MetaFileManager {
     }
 
     this.header.writeInt32BE(index, META_FILE_COMMIT_OFFSET);
-    await this.metaFile.write(this.header, META_FILE_COMMIT_OFFSET, INT_SIZE, META_FILE_COMMIT_OFFSET);
+    if (!this.isBufferingEnabled) {
+      await this.metaFile.write(this.header, META_FILE_COMMIT_OFFSET, INT_SIZE, META_FILE_COMMIT_OFFSET);
+    }
 
     return index;
   }
@@ -122,6 +145,8 @@ export class MetaFileManager {
     if (logIndex >= this.head) {
       throw new Error(`Invalid log offset ${logIndex}. Out of bounds`);
     }
+
+    await this.sync();
 
     const index = this.localIndex(logIndex);
     const indexFileOffset = HEADER_SIZE + index * INDEX_SIZE;
@@ -165,21 +190,64 @@ export class MetaFileManager {
 
     indexBuffer.writeUInt32BE(segmentID, 0);
     indexBuffer.writeUInt32BE(offset, INT_SIZE);
-    await this.metaFile.write(indexBuffer, 0, INDEX_SIZE, indexFileOffset);
+
+    if (this.isBufferingEnabled) {
+      if (this.updatesQueue.length === 0) {
+        this.updatesQueueFileOffset = indexFileOffset;
+      }
+
+      this.updatesQueue.push(indexBuffer);
+    } else {
+      await this.metaFile.write(indexBuffer, 0, INDEX_SIZE, indexFileOffset);
+    }
 
     this.header.writeUInt32BE(this.head + 1, META_FILE_HEAD_OFFSET);
-    await this.metaFile.write(this.header, META_FILE_HEAD_OFFSET, INT_SIZE, META_FILE_HEAD_OFFSET);
+
+    if (!this.isBufferingEnabled) {
+      await this.metaFile.write(this.header, META_FILE_HEAD_OFFSET, INT_SIZE, META_FILE_HEAD_OFFSET);
+    }
+
+    if (this.isBufferingEnabled && this.updatesQueue.length >= this.maxBufferSize) {
+      await this.sync();
+    }
 
     return currentHead;
+  }
+
+  async sync(): Promise<void> {
+    if (!this.updatesQueue || this.updatesQueue.length === 0) {
+      return;
+    }
+
+    const buffer = Buffer.concat(this.updatesQueue);
+
+    await this.metaFile.write(this.header, META_FILE_HEAD_OFFSET, 2 * INT_SIZE, META_FILE_HEAD_OFFSET);
+    await this.metaFile.write(buffer, 0, buffer.length, this.updatesQueueFileOffset);
+    // await this.metaFile.write(this.header, META_FILE_COMMIT_OFFSET, INT_SIZE, META_FILE_COMMIT_OFFSET);
+
+    this.updatesQueue = [];
+    this.updatesQueueFileOffset = 0;
   }
 
   private localIndex(logOffset: number): number {
     return logOffset - this.base;
   }
 
-  static async create(filePath: string): Promise<MetaFileManager> {
+  private startAutoSync(): void {
+    this.syncTimer = setInterval(() => {
+      this.sync();
+    }, this.autoSyncInterval);
+  }
+
+  static async create(
+    filePath: string,
+    opts?: {
+      bufferingEnabled?: boolean;
+      maxBufferSize?: number;
+    },
+  ): Promise<MetaFileManager> {
     const metaFile = await open(filePath, "w+");
-    const metaFileManager = new MetaFileManager(metaFile);
+    const metaFileManager = new MetaFileManager(metaFile, opts);
 
     const header = Buffer.alloc(HEADER_SIZE);
     await metaFile.read(header, 0, HEADER_SIZE, 0);
@@ -199,3 +267,9 @@ export class MetaFileManager {
     return metaFileManager;
   }
 }
+
+export type MetaManagerOptions = {
+  bufferingEnabled?: boolean;
+  maxBufferSize?: number;
+  autoSyncInterval?: number;
+};

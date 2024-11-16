@@ -69,6 +69,7 @@ describe("Test WAL ops", () => {
       }
 
       await writer.close();
+      await file.close();
     }
 
     const wal = new WAL(walDirPath);
@@ -185,7 +186,7 @@ describe("Test WAL ops", () => {
   it("Should truncate all uncommitted entries when recovering - multiple segment", async () => {
     const randomDirName = createRandomString(10);
     const walDirPath = path.join(__dirname, randomDirName);
-    // dirs.push(walDirPath);
+    dirs.push(walDirPath);
     mkdirSync(walDirPath);
 
     const wal = new WAL(walDirPath, {
@@ -288,6 +289,7 @@ async function readWALContent(walDirPath: string): Promise<Buffer> {
         entries.push(reader.entry.encode());
       }
 
+      await file.close();
       return Buffer.concat(entries);
     }),
   );
