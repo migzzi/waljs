@@ -30,13 +30,13 @@ The main goal of a Write-ahead Log (WAL) is to make the application more durable
 Just simply run the following command
 
 ```sh
-npm install --save @zamurai/waljs
+npm install --save @zamurai/wal
 ```
 
 , Or if you're using yarn
 
 ```sh
-yarn add @zamurai/waljs
+yarn add @zamurai/wal
 ```
 
 ## Initialization
@@ -71,8 +71,6 @@ await wal.close();
 ```
 
 ## Configuration
-
-Use the following steps to initialize an instance of a wal.
 
 ```ts
 {
