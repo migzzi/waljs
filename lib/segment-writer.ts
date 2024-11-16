@@ -6,10 +6,10 @@ import { FileHandle } from "fs/promises";
 // Every Entry is written, using the following binary layout (big endian format):
 //
 //	  ┌─────────────┬───────────┬──────────┬─────────┐
-//	  │ Offset (4B) │ Type (1B) │ CRC (4B) │ Payload │
+//	  │ Index (4B)  │ Type (1B) │ CRC (4B) │ Payload │
 //	  └─────────────┴───────────┴──────────┴─────────┘
 //
-//		- Offset = 32bit WAL entry number for each record in order to implement a low-water mark
+//		- Index = 32bit WAL entry number for each record in order to implement a low-water mark
 //		- Type = Type of WAL entry
 //		- CRC = 32bit hash computed over the payload using CRC
 //		- Payload = The actual WAL entry payload data
@@ -41,17 +41,20 @@ export class SegmentWriter {
   // Note, that we do not use the Entry interface here because encoding the
   // payload is done at an earlier stage than actually writing data to the WAL
   // segment.
-  async write(offset: number, typ: number, checksum: number, payload: Buffer): Promise<void> {
+  async write(index: number, typ: number, checksum: number, payload: Buffer): Promise<number> {
     const header = Buffer.alloc(9);
 
-    header.writeUInt32BE(offset, 0);
+    header.writeUInt32BE(index, 0);
     header.writeUInt8(typ, 4);
     header.writeUInt32BE(checksum, 5);
 
+    const oldSize = this._size;
     // If the current batch size exceeds the maximum allowed size, we need to
     await this.writer.write(Buffer.concat([header, payload]));
 
     this._size += 9 + payload.length;
+
+    return oldSize;
   }
 
   // Sync writes any buffered data to the underlying io.Writer and syncs the file

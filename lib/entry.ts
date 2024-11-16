@@ -12,7 +12,7 @@ export interface IEntry {
   // Reading and decoding are separate steps for performance reasons. Sometimes
   // we might want to quickly seek through the WAL without having to decode
   // every entry.
-  read(r: Reader): Promise<Buffer>;
+  read(r: Reader, offset?: number): Promise<Buffer>;
 
   // DecodePayload decodes an entry from a payload that has previously been read
   // by read(…).

@@ -25,18 +25,20 @@ import { EntryRegistry } from "./entry-registry";
 // }
 export class SegmentReader {
   private reader: FileReader;
-  private _offset: number;
+  private _index: number;
   private type: EntryType;
   private checksum: number;
   private _entry: IEntry;
   private payload: Buffer;
+  private currOffset: number;
 
   constructor(reader: FileHandle) {
     this.reader = new FileReader(reader);
-    this._offset = 0;
+    this._index = 0;
     this.type = 0;
     this.checksum = 0;
     this._entry = null;
+    this.currOffset = 0;
     this.payload = Buffer.alloc(0);
   }
 
@@ -44,7 +46,71 @@ export class SegmentReader {
   async seekEnd(): Promise<number> {
     while (await this.readNext()) {}
 
-    return this._offset;
+    return this._index;
+  }
+
+  async seekOffset(offset: number): Promise<void> {
+    if (offset < 0) {
+      throw new Error("Invalid offset");
+    }
+
+    const header = Buffer.alloc(9); // 4B offset + 1B type + 4B checksum
+    const content = await this.reader.file.read(header, 0, 9, offset);
+
+    if (content === null || content.bytesRead === 0) {
+      return;
+    }
+
+    if (content.bytesRead < 9) {
+      throw new Error("Unexpected EOF");
+    }
+
+    this._index = header.readUInt32BE(0);
+    this.type = header.readUInt8(4);
+    this.checksum = header.readUInt32BE(5);
+
+    this._entry = EntryRegistry.get(this.type);
+    if (!this._entry) {
+      throw new Error("Invalid entry type");
+    }
+
+    this.payload = await this._entry.read(this.reader);
+  }
+
+  async readOffset(offset: number): Promise<IEntry> {
+    if (offset < 0) {
+      throw new Error("Invalid offset");
+    }
+
+    const header = Buffer.alloc(9); // 4B offset + 1B type + 4B checksum
+    const res = await this.reader.file.read(header, 0, 9, offset);
+
+    if (res === null || res.bytesRead === 0) {
+      return;
+    }
+
+    if (res.bytesRead < 9) {
+      throw new Error("Unexpected EOF");
+    }
+
+    const index = header.readUInt32BE(0);
+    const type = header.readUInt8(4);
+    const checksum = header.readUInt32BE(5);
+    const entry = EntryRegistry.get(type);
+
+    if (!entry) {
+      throw new Error("Invalid entry type");
+    }
+
+    const payload = await entry.read(this.reader, offset + 9);
+
+    if (checksum !== crc32.buf(payload) >>> 0) {
+      throw new Error(`Detected WAL Entry corruption at WAL index ${index}`);
+    }
+
+    entry.decode(payload);
+
+    return entry;
   }
 
   // ReadNext loads the data for the next Entry from the underlying reader.
@@ -57,7 +123,9 @@ export class SegmentReader {
   // In order to actually decode the read WAL entry, you need to use SegmentReader.decode(…).
   async readNext(): Promise<boolean> {
     const header = Buffer.alloc(9); // 4B offset + 1B type + 4B checksum
-    const res = await this.reader.file.read(header, 0, 9);
+    const res = await this.reader.file.read(header, 0, 9, this.currOffset);
+
+    this.currOffset += 9;
 
     if (res === null || res.bytesRead === 0) {
       return false;
@@ -67,7 +135,7 @@ export class SegmentReader {
       throw new Error("Unexpected EOF");
     }
 
-    this._offset = header.readUInt32BE(0);
+    this._index = header.readUInt32BE(0);
     this.type = header.readUInt8(4);
     this.checksum = header.readUInt32BE(5);
 
@@ -76,7 +144,10 @@ export class SegmentReader {
       throw new Error("Invalid entry type");
     }
 
-    this.payload = await this._entry.read(this.reader);
+    this.payload = await this._entry.read(this.reader, this.currOffset);
+
+    this.currOffset += this.payload.length;
+
     return true;
   }
 
@@ -87,16 +158,16 @@ export class SegmentReader {
     }
 
     if (this.checksum !== crc32.buf(this.payload) >>> 0) {
-      throw new Error(`Detected WAL Entry corruption at WAL offset ${this.offset}`);
+      throw new Error(`Detected WAL Entry corruption at WAL index ${this.index}`);
     }
 
     this._entry.decode(this.payload);
     return this._entry;
   }
 
-  // offset returns the offset of the last read entry.
-  get offset(): number {
-    return this._offset;
+  // index returns the index of the last read entry.
+  get index(): number {
+    return this._index;
   }
 
   get entry(): IEntry {

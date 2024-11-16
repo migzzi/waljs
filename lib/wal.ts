@@ -4,8 +4,9 @@ import * as fs from "fs/promises";
 import * as glob from "glob";
 import path from "path";
 import { EntryType, IEntry } from "./entry";
-import { SegmentReader } from "./segment-reader";
+import { MetaFileManager } from "./meta-manager";
 import { SegmentWriter } from "./segment-writer";
+import { SegmentReader } from "./segment-reader";
 
 type WALOptions = {
   logger?: (level: string, msg: string, attrs?: Record<string, unknown>) => void;
@@ -17,8 +18,9 @@ type WALOptions = {
 export class WAL {
   private currSegmentFile: fs.FileHandle;
   private currSegmentWriter: SegmentWriter | null = null;
-  private currSegmentID = 0;
-  private lastOffset = 0;
+  private currSegmentID = -1;
+  // private lastOffset = 0;
+  private metaManager: MetaFileManager;
 
   private maxSegmentSize: number = 10 * 1024 * 1024; // 10MB
   private onSync: (() => void)[] = [];
@@ -55,6 +57,8 @@ export class WAL {
 
     this.logger("debug", `Initializing WAL at ${this.walFilePath}`);
 
+    await this.loadOrCreateMetaFileManager();
+
     const segments = await this.loadSegmentFilesNames();
     if (segments.length === 0) {
       this.logger("debug", `No segments found in WAL at ${this.walFilePath}`);
@@ -74,10 +78,10 @@ export class WAL {
 
     this.logger(
       "debug",
-      `Loaded last segment in WAL at ${this.walFilePath}: ${lastSegment}, offset: ${this.lastOffset}`,
+      `Loaded last segment in WAL at ${this.walFilePath}: ${lastSegment}, index: ${this.metaManager.lastIndex}`,
       {
         last_segment: lastSegment,
-        last_offset: this.lastOffset,
+        last_index: this.metaManager.lastIndex,
         segments: segments,
       },
     );
@@ -85,6 +89,11 @@ export class WAL {
     this._isInitialized = true;
   }
 
+  /**
+   * Write a new entry to the WAL.
+   * @param {IEntry} entry
+   * @returns {Promise<number>} The index of the new entry.
+   */
   public async write(entry: IEntry): Promise<number> {
     // Serialize the new WAL entry first into a buffer and then flush it with a
     // single write operation to disk.
@@ -95,18 +104,26 @@ export class WAL {
       this.syncWaiters.push(resolve);
     });
 
-    const offset = await this.writeLock.runExclusive(() => this.doWrite(entry.type(), checksum, encodedEntry));
+    const index = await this.writeLock.runExclusive(() => this.doWrite(entry.type(), checksum, encodedEntry));
 
     await p;
 
-    // Update the last offset.
-
-    return offset;
+    return index;
   }
 
-  // Close gracefully shuts down the writeAheadLog by making sure that all pending
-  // writes are completed and synced to disk before then closing the WAL segment file.
-  // Any future writes after the WAL has been closed will lead to an error.
+  /**
+   * Commit marks the entry at the given index as committed.
+   * @param {number} index
+   */
+  public async commit(index: number): Promise<void> {
+    await this.metaManager.commit(index);
+  }
+
+  /**
+    Close gracefully shuts down the writeAheadLog by making sure that all pending
+    writes are completed and synced to disk before then closing the WAL segment file.
+    Any future writes after the WAL has been closed will lead to an error.
+   */
   public async close(): Promise<void> {
     await this.writeLock.runExclusive(async () => {
       this.isClosed = true;
@@ -129,6 +146,42 @@ export class WAL {
     });
   }
 
+  public async recover(handler?: (index: number, entry: IEntry) => Promise<boolean>): Promise<void> {
+    if (this.isClosed) {
+      throw new Error("WAL is closed");
+    }
+
+    if (!handler) {
+      handler = async () => false;
+    }
+
+    if (this.metaManager.commitIndex === -1 || this.metaManager.commitIndex === this.metaManager.lastIndex) {
+      return;
+    }
+
+    // start recovery from index commitIndex + 1
+    const startIndex = this.metaManager.commitIndex + 1;
+
+    for (let i = startIndex; i <= this.metaManager.lastIndex; i++) {
+      const entry = await this.getEntry(i);
+      const shallCommit = await handler(i, entry);
+
+      if (shallCommit) {
+        await this.metaManager.commit(i);
+      } else {
+        await this.truncate(i);
+        return;
+      }
+    }
+  }
+
+  public async getEntry(index: number): Promise<IEntry> {
+    const pos = await this.metaManager.position(index);
+    const segment = await fs.open(`${this.walFilePath}/${pos.segmentID}.wal`, "r");
+    const reader = new SegmentReader(segment);
+    return await reader.readOffset(pos.offset);
+  }
+
   private async loadSegmentFilesNames(): Promise<string[]> {
     const dirs = await glob.glob(`${this.walFilePath}/*.wal`);
 
@@ -142,12 +195,30 @@ export class WAL {
       });
   }
 
+  private async loadOrCreateMetaFileManager(): Promise<void> {
+    const metaFilePath = path.join(this.walFilePath, "index.META");
+
+    const doesExists = await checkFileExists(metaFilePath);
+    if (!doesExists) {
+      this.logger("debug", "Creating new meta file.");
+      this.metaManager = await MetaFileManager.create(metaFilePath);
+
+      return;
+    }
+
+    this.logger("debug", "Loading existing meta file.");
+
+    this.metaManager = new MetaFileManager(await fs.open(metaFilePath, "r+"));
+
+    await this.metaManager.init();
+  }
+
   private async openSegmentFile(segment: string): Promise<SegmentWriter> {
-    const file = await fs.open(`${this.walFilePath}/${segment}`, "a+");
+    const file = await fs.open(`${this.walFilePath}/${segment}`, "r+");
 
     // seek to the end of the file
-    const segmentReader = new SegmentReader(file);
-    this.lastOffset = await segmentReader.seekEnd();
+    // const segmentReader = new SegmentReader(file);
+    // this.lastOffset = await segmentReader.seekEnd();
 
     return new SegmentWriter(file);
   }
@@ -166,25 +237,26 @@ export class WAL {
     // function is going to set up the segment writer for us now.
     // await this.rollSegmentIfNeeded();
 
-    const offset = this.lastOffset + 1;
+    const newIndex = this.metaManager.head;
 
     this.logger("debug", "Writing WAL entry", {
       entry: payload.toString(),
-      offset,
+      newIndex,
       type,
       checksum,
       segmentID: this.currSegmentID,
     });
 
     // Write the entry to the segment file.
-    await this.currSegmentWriter.write(offset, type, checksum, payload);
-    this.lastOffset = offset;
+    const offset = await this.currSegmentWriter.write(newIndex, type, checksum, payload);
+    await this.metaManager.write(this.currSegmentID, offset);
+    // this.lastOffset = offset;
 
     this.scheduleSync();
 
     // await this.sync();
 
-    return offset;
+    return newIndex;
   }
 
   private async rollSegmentIfNeeded(): Promise<void> {
@@ -209,6 +281,38 @@ export class WAL {
     });
 
     this.currSegmentWriter = new SegmentWriter(this.currSegmentFile);
+
+    return;
+  }
+
+  private async truncate(fromLogIndex: number): Promise<void> {
+    const pos = await this.metaManager.position(fromLogIndex);
+    await this.metaManager.truncate(fromLogIndex);
+    // truncate the segment file and remove the rest of the segments if any.
+
+    if (pos.segmentID === this.currSegmentID) {
+      await this.currSegmentFile.truncate(pos.offset);
+
+      return;
+    }
+
+    // remove the current segment file.
+    await this.currSegmentWriter.close();
+
+    await Promise.all(
+      Array.from({ length: this.currSegmentID - pos.segmentID }, (_, i) => {
+        return fs.unlink(`${this.walFilePath}/${pos.segmentID + i + 1}.wal`);
+      }),
+    );
+
+    this.currSegmentID = pos.segmentID;
+
+    // reset the current segment writer
+    this.currSegmentFile = await fs.open(`${this.walFilePath}/${this.currSegmentID}.wal`, "r+");
+    await this.currSegmentFile.truncate(pos.offset);
+
+    this.currSegmentWriter = new SegmentWriter(this.currSegmentFile);
+    // truncate the segment file to the given offset
 
     return;
   }
@@ -266,7 +370,20 @@ export class WAL {
     return this.currSegmentID;
   }
 
-  getLastOffset(): number {
-    return this.lastOffset;
+  getLastIndex(): number {
+    return this.metaManager.head - 1;
+  }
+
+  getNextIndex(): number {
+    return this.metaManager.head;
+  }
+}
+
+async function checkFileExists(filePath: string): Promise<boolean> {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
   }
 }
