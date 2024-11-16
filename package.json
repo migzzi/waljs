@@ -1,6 +1,6 @@
 {
   "name": "@zamurai/wal",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "@zamurai/wal is an efficient write-ahead log implementation for Node.js",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
