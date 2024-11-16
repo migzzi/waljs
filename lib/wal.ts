@@ -387,6 +387,14 @@ export class WAL {
   getNextIndex(): number {
     return this.metaManager.head;
   }
+
+  get commitIndex(): number {
+    return this.metaManager.commitIndex;
+  }
+
+  isCommitted(index: number): boolean {
+    return this.metaManager.isCommitted(index);
+  }
 }
 
 async function checkFileExists(filePath: string): Promise<boolean> {
