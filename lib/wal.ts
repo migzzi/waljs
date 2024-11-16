@@ -62,6 +62,7 @@ export class WAL {
     const segments = await this.loadSegmentFilesNames();
     if (segments.length === 0) {
       this.logger("debug", `No segments found in WAL at ${this.walFilePath}`);
+      this._isInitialized = true;
 
       return;
     }
@@ -128,7 +129,7 @@ export class WAL {
     await this.writeLock.runExclusive(async () => {
       this.isClosed = true;
 
-      if (!this.isInitialized) {
+      if (!this._isInitialized) {
         return;
       }
 
@@ -141,6 +142,8 @@ export class WAL {
 
         this.currSegmentWriter = null;
       }
+
+      await this.metaManager.close();
 
       this._isInitialized = false;
     });
@@ -179,7 +182,11 @@ export class WAL {
     const pos = await this.metaManager.position(index);
     const segment = await fs.open(`${this.walFilePath}/${pos.segmentID}.wal`, "r");
     const reader = new SegmentReader(segment);
-    return await reader.readOffset(pos.offset);
+    const entry = await reader.readOffset(pos.offset);
+
+    await segment.close();
+
+    return entry;
   }
 
   private async loadSegmentFilesNames(): Promise<string[]> {
