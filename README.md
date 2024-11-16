@@ -64,6 +64,18 @@ await wal.write(new EntryExample1(data2));
 await wal.write(new EntryExample2(data3));
 ```
 
+You can also recover the WAL using the following call.
+
+```ts
+await wal.recover(); // Will remove all uncommitted entries.
+
+// Or you can use the following to recover the WAL and do something with the uncommitted entries.
+await wal.recover(async (index, entry): boolean => {
+  // Do something with the recovered entry.
+  return true; // Return false to stop the recovery process.
+}); // Will recover all entries.
+```
+
 When you're done using the WAL, you can stop it using the following call.
 
 ```ts
