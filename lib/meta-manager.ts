@@ -215,13 +215,14 @@ export class MetaFileManager {
   }
 
   async sync(): Promise<void> {
+    await this.metaFile.write(this.header, META_FILE_HEAD_OFFSET, 2 * INT_SIZE, META_FILE_HEAD_OFFSET);
+
     if (!this.updatesQueue || this.updatesQueue.length === 0) {
       return;
     }
 
     const buffer = Buffer.concat(this.updatesQueue);
 
-    await this.metaFile.write(this.header, META_FILE_HEAD_OFFSET, 2 * INT_SIZE, META_FILE_HEAD_OFFSET);
     await this.metaFile.write(buffer, 0, buffer.length, this.updatesQueueFileOffset);
     // await this.metaFile.write(this.header, META_FILE_COMMIT_OFFSET, INT_SIZE, META_FILE_COMMIT_OFFSET);
 
