@@ -16,6 +16,7 @@ The main goal of a Write-ahead Log (WAL) is to make the application more durable
   - [Installation](#installation)
   - [Initialization](#initialization)
   - [Usage](#usage)
+  - [Configuration](#configuration)
   - [How it works](#how-it-works)
   - [Benchmarks](#benchmarks)
     - [WAL write](#wal-write)
@@ -29,13 +30,13 @@ The main goal of a Write-ahead Log (WAL) is to make the application more durable
 Just simply run the following command
 
 ```sh
-npm install --save waljs
+npm install --save @zamurai/waljs
 ```
 
 , Or if you're using yarn
 
 ```sh
-yarn add waljs
+yarn add @zamurai/waljs
 ```
 
 ## Initialization
@@ -69,6 +70,40 @@ When you're done using the WAL, you can stop it using the following call.
 await wal.close();
 ```
 
+## Configuration
+
+Use the following steps to initialize an instance of a wal.
+
+```ts
+{
+  // log function used to log internal messages.
+  // Default is NOOP.
+  logger?: (level: string, msg: string, attrs?: Record<string, unknown>) => void;
+
+  // The maximum size of a single WAL segment file in bytes. 
+  // Default is 10MB.
+  maxSegmentSize?: number;
+
+  // Configuration for metadata file.
+  meta?: {
+    // If buffering is enabled, the WAL will buffer **METADATA** writes (i.e. head, commitIndex) in memory before writing them to disk. 
+    // Note that this does not affect the WAL entries themselves, which are always written to disk immediately.
+    // Also note that buffering may cause metadata data loss in case of a crash.
+    // Default is true.
+    bufferingEnabled?: boolean;
+
+    // The maximum number of the metadata updates buffer.
+    // When this size is reached, the WAL will flush the buffer to disk. Even if the autoSyncInterval is not reached.
+    // Default 1024 updates.
+    maxBufferSize?: number;
+
+    // The interval in milliseconds at which the WAL will sync the metadata to disk. 
+    // Default is 1000ms.
+    autoSyncInterval?: number;
+  };
+};
+```
+
 ## How it works
 
 Each `WAL.write(…)` call creates a binary encoding of the passed `IEntry` which 
@@ -91,7 +126,6 @@ The full binary layout looks like the following:
 //		- Payload = The actual WAL entry payload data
 ```
 
-
 This data is appended to a file and the WAL makes sure that it is actually
 written to non-volatile storage rather than just being stored in a memory-based
 write cache that would be lost if power failed (see [fsynced][fsync]).
@@ -102,7 +136,6 @@ _segments_. Typically, the WAL is split into multiple segments to enable other
 processes to take care of cleaning old segments, implement WAL segment backups
 and more. When the WAL is started, it will resume operation at the end of the
 last open segment file.
-
 
 ## Benchmarks
 
@@ -139,8 +172,7 @@ This work was inspired by the [WAL implementation in Go by fgrosse](https://gith
 
 ## What's next?
 
-- [ ] Add support for WAL Recovery
+- [x] Add support for WAL Recovery
 - [ ] Add support for WAL compaction
-- [ ] Add support for WAL replication
 - [ ] Add support for WAL encryption
 - [ ] Add support for WAL compression
