@@ -11,7 +11,7 @@ import { SegmentReader } from "./segment-reader";
 type WALOptions = {
   logger?: (level: string, msg: string, attrs?: Record<string, unknown>) => void;
   maxSegmentSize?: number;
-  onSync?: (() => void)[];
+  // onSync?: (() => void)[];
   meta?: MetaManagerOptions;
   // syncDelay?: number;
 };
@@ -25,7 +25,7 @@ export class WAL {
   private metaManagerOpts: MetaManagerOptions;
 
   private maxSegmentSize: number = 10 * 1024 * 1024; // 10MB
-  private onSync: (() => void)[] = [];
+  // private onSync: (() => void)[] = [];
   private syncDelay = 0;
 
   private writeLock = new Mutex();
@@ -48,7 +48,7 @@ export class WAL {
   constructor(private walFilePath: string, opts?: WALOptions) {
     this.logger = opts?.logger || this.logger;
     this.maxSegmentSize = opts?.maxSegmentSize || this.maxSegmentSize;
-    this.onSync = opts?.onSync || this.onSync;
+    // this.onSync = opts?.onSync || this.onSync;
     this.metaManagerOpts = opts?.meta;
     // this.syncDelay = opts?.syncDelay || this.syncDelay;
   }
