@@ -38,6 +38,7 @@ describe("Meta file manager ops", () => {
         Buffer.from([0, 0, 0, 0]),
         Buffer.from([0, 0, 0, 3]),
         commitBuffer,
+        Buffer.from([0, 0, 0, 0]),
         Buffer.from([0, 0, 0, 0, 0, 0, 0, 0]),
         Buffer.from([0, 0, 0, 0, 0, 0, 0, 1]),
         Buffer.from([0, 0, 0, 0, 0, 0, 0, 2]),
@@ -78,6 +79,7 @@ describe("Meta file manager ops", () => {
         Buffer.from([0, 0, 0, 0]),
         Buffer.from([0, 0, 0, 3]),
         commitBuffer,
+        Buffer.from([0, 0, 0, 0]),
         Buffer.from([0, 0, 0, 0, 0, 0, 0, 0]),
         Buffer.from([0, 0, 0, 0, 0, 0, 0, 10]),
         Buffer.from([0, 0, 0, 0, 0, 0, 0, 20]),
@@ -144,6 +146,7 @@ describe("Meta file manager ops", () => {
         Buffer.from([0, 0, 0, 0]),
         Buffer.from([0, 0, 0, 3]),
         commitBuffer,
+        Buffer.from([0, 0, 0, 0]),
         Buffer.from([0, 0, 0, 0, 0, 0, 0, 0]),
         Buffer.from([0, 0, 0, 0, 0, 0, 0, 10]),
         Buffer.from([0, 0, 0, 0, 0, 0, 0, 20]),
@@ -225,6 +228,7 @@ describe("Meta file manager ops", () => {
         Buffer.from([0, 0, 0, 0]),
         Buffer.from([0, 0, 0, 6]),
         commitBuffer,
+        Buffer.from([0, 0, 0, 0]),
         Buffer.from([0, 0, 0, 0, 0, 0, 0, 0]),
         Buffer.from([0, 0, 0, 0, 0, 0, 0, 10]),
         Buffer.from([0, 0, 0, 0, 0, 0, 0, 20]),
@@ -331,6 +335,113 @@ describe("Meta file manager ops", () => {
 
       await meta.close();
     });
+
+    it("Should write indexes on multiple segments", async () => {
+      const randomName = createRandomString(10);
+      const filePath = path.join(__dirname, `${randomName}.meta`);
+      files.push(filePath);
+      const meta = await MetaFileManager.create(filePath, {
+        bufferingEnabled: true,
+      });
+
+      await meta.write(0, 0);
+      await meta.write(0, 10);
+      await meta.write(0, 20);
+
+      await meta.commit(0);
+      await meta.commit(1);
+
+      expect(meta.segmentID).toEqual(0);
+
+      // Write to new segment
+      await meta.write(1, 0);
+      await meta.write(1, 10);
+      await meta.write(1, 20);
+
+      expect(meta.segmentID).toEqual(1);
+
+      let commitBuffer = Buffer.alloc(4);
+      commitBuffer.writeInt32BE(1);
+
+      let expectedContent = Buffer.concat([
+        Buffer.from("META"),
+        Buffer.from([0, 0, 0, 0]),
+        Buffer.from([0, 0, 0, 6]),
+        commitBuffer,
+        Buffer.from([0, 0, 0, 1]),
+        Buffer.from([0, 0, 0, 0, 0, 0, 0, 0]),
+        Buffer.from([0, 0, 0, 0, 0, 0, 0, 10]),
+        Buffer.from([0, 0, 0, 0, 0, 0, 0, 20]),
+        Buffer.from([0, 0, 0, 1, 0, 0, 0, 0]),
+        Buffer.from([0, 0, 0, 1, 0, 0, 0, 10]),
+        Buffer.from([0, 0, 0, 1, 0, 0, 0, 20]),
+      ]);
+
+      await meta.sync();
+
+      let content = readFileSync(filePath);
+
+      expect(content).toEqual(expectedContent);
+
+      // Commit more indexes
+      await meta.commit(2);
+      await meta.commit(3);
+      await meta.commit(4);
+
+      commitBuffer = Buffer.alloc(4);
+      commitBuffer.writeInt32BE(4);
+
+      expectedContent = Buffer.concat([
+        Buffer.from("META"),
+        Buffer.from([0, 0, 0, 0]),
+        Buffer.from([0, 0, 0, 6]),
+        commitBuffer,
+        Buffer.from([0, 0, 0, 1]),
+        Buffer.from([0, 0, 0, 0, 0, 0, 0, 0]),
+        Buffer.from([0, 0, 0, 0, 0, 0, 0, 10]),
+        Buffer.from([0, 0, 0, 0, 0, 0, 0, 20]),
+        Buffer.from([0, 0, 0, 1, 0, 0, 0, 0]),
+        Buffer.from([0, 0, 0, 1, 0, 0, 0, 10]),
+        Buffer.from([0, 0, 0, 1, 0, 0, 0, 20]),
+      ]);
+
+      expect(meta.commitIndex).toEqual(4);
+
+      await meta.sync();
+
+      content = readFileSync(filePath);
+
+      expect(content).toEqual(expectedContent);
+
+      await meta.close();
+    });
+
+    it("Should throw when writing to an older segment", async () => {
+      const randomName = createRandomString(10);
+      const filePath = path.join(__dirname, `${randomName}.meta`);
+      files.push(filePath);
+      const meta = await MetaFileManager.create(filePath, {
+        bufferingEnabled: true,
+      });
+
+      await meta.write(0, 0);
+      await meta.write(0, 10);
+      await meta.write(0, 20);
+
+      await meta.commit(0);
+      await meta.commit(1);
+
+      expect(meta.segmentID).toEqual(0);
+
+      // Write to new segment
+      await meta.write(1, 0);
+      await meta.write(1, 10);
+      await meta.write(1, 20);
+
+      expect(meta.write(0, 30)).rejects.toThrowError("Invalid segment ID 0. Out of order");
+
+      await meta.close();
+    });
   });
 
   describe("With buffering disabled", () => {
@@ -352,6 +463,7 @@ describe("Meta file manager ops", () => {
         Buffer.from([0, 0, 0, 0]),
         Buffer.from([0, 0, 0, 0]),
         commitBuffer,
+        Buffer.from([0, 0, 0, 0]),
       ]);
 
       const content = readFileSync(filePath);
@@ -384,6 +496,7 @@ describe("Meta file manager ops", () => {
         Buffer.from([0, 0, 0, 0]),
         Buffer.from([0, 0, 0, 3]),
         commitBuffer,
+        Buffer.from([0, 0, 0, 0]),
         Buffer.from([0, 0, 0, 0, 0, 0, 0, 0]),
         Buffer.from([0, 0, 0, 0, 0, 0, 0, 1]),
         Buffer.from([0, 0, 0, 0, 0, 0, 0, 2]),
@@ -423,6 +536,7 @@ describe("Meta file manager ops", () => {
         Buffer.from([0, 0, 0, 0]),
         Buffer.from([0, 0, 0, 3]),
         commitBuffer,
+        Buffer.from([0, 0, 0, 0]),
         Buffer.from([0, 0, 0, 0, 0, 0, 0, 0]),
         Buffer.from([0, 0, 0, 0, 0, 0, 0, 10]),
         Buffer.from([0, 0, 0, 0, 0, 0, 0, 20]),
@@ -487,6 +601,7 @@ describe("Meta file manager ops", () => {
         Buffer.from([0, 0, 0, 0]),
         Buffer.from([0, 0, 0, 3]),
         commitBuffer,
+        Buffer.from([0, 0, 0, 0]),
         Buffer.from([0, 0, 0, 0, 0, 0, 0, 0]),
         Buffer.from([0, 0, 0, 0, 0, 0, 0, 10]),
         Buffer.from([0, 0, 0, 0, 0, 0, 0, 20]),
@@ -566,6 +681,7 @@ describe("Meta file manager ops", () => {
         Buffer.from([0, 0, 0, 0]),
         Buffer.from([0, 0, 0, 6]),
         commitBuffer,
+        Buffer.from([0, 0, 0, 0]),
         Buffer.from([0, 0, 0, 0, 0, 0, 0, 0]),
         Buffer.from([0, 0, 0, 0, 0, 0, 0, 10]),
         Buffer.from([0, 0, 0, 0, 0, 0, 0, 20]),
@@ -667,6 +783,113 @@ describe("Meta file manager ops", () => {
       await meta.write(0, 50);
 
       expect(meta.truncate(6)).rejects.toThrowError("Invalid log offset 6. Out of bounds");
+
+      await meta.close();
+    });
+
+    it("Should write indexes on multiple segments", async () => {
+      const randomName = createRandomString(10);
+      const filePath = path.join(__dirname, `${randomName}.meta`);
+      files.push(filePath);
+      const meta = await MetaFileManager.create(filePath, {
+        bufferingEnabled: false,
+      });
+
+      await meta.write(0, 0);
+      await meta.write(0, 10);
+      await meta.write(0, 20);
+
+      await meta.commit(0);
+      await meta.commit(1);
+
+      expect(meta.segmentID).toEqual(0);
+
+      // Write to new segment
+      await meta.write(1, 0);
+      await meta.write(1, 10);
+      await meta.write(1, 20);
+
+      expect(meta.segmentID).toEqual(1);
+
+      let commitBuffer = Buffer.alloc(4);
+      commitBuffer.writeInt32BE(1);
+
+      let expectedContent = Buffer.concat([
+        Buffer.from("META"),
+        Buffer.from([0, 0, 0, 0]),
+        Buffer.from([0, 0, 0, 6]),
+        commitBuffer,
+        Buffer.from([0, 0, 0, 1]),
+        Buffer.from([0, 0, 0, 0, 0, 0, 0, 0]),
+        Buffer.from([0, 0, 0, 0, 0, 0, 0, 10]),
+        Buffer.from([0, 0, 0, 0, 0, 0, 0, 20]),
+        Buffer.from([0, 0, 0, 1, 0, 0, 0, 0]),
+        Buffer.from([0, 0, 0, 1, 0, 0, 0, 10]),
+        Buffer.from([0, 0, 0, 1, 0, 0, 0, 20]),
+      ]);
+
+      await meta.sync();
+
+      let content = readFileSync(filePath);
+
+      expect(content).toEqual(expectedContent);
+
+      // Commit more indexes
+      await meta.commit(2);
+      await meta.commit(3);
+      await meta.commit(4);
+
+      commitBuffer = Buffer.alloc(4);
+      commitBuffer.writeInt32BE(4);
+
+      expectedContent = Buffer.concat([
+        Buffer.from("META"),
+        Buffer.from([0, 0, 0, 0]),
+        Buffer.from([0, 0, 0, 6]),
+        commitBuffer,
+        Buffer.from([0, 0, 0, 1]),
+        Buffer.from([0, 0, 0, 0, 0, 0, 0, 0]),
+        Buffer.from([0, 0, 0, 0, 0, 0, 0, 10]),
+        Buffer.from([0, 0, 0, 0, 0, 0, 0, 20]),
+        Buffer.from([0, 0, 0, 1, 0, 0, 0, 0]),
+        Buffer.from([0, 0, 0, 1, 0, 0, 0, 10]),
+        Buffer.from([0, 0, 0, 1, 0, 0, 0, 20]),
+      ]);
+
+      expect(meta.commitIndex).toEqual(4);
+
+      await meta.sync();
+
+      content = readFileSync(filePath);
+
+      expect(content).toEqual(expectedContent);
+
+      await meta.close();
+    });
+
+    it("Should throw when writing to an older segment", async () => {
+      const randomName = createRandomString(10);
+      const filePath = path.join(__dirname, `${randomName}.meta`);
+      files.push(filePath);
+      const meta = await MetaFileManager.create(filePath, {
+        bufferingEnabled: false,
+      });
+
+      await meta.write(0, 0);
+      await meta.write(0, 10);
+      await meta.write(0, 20);
+
+      await meta.commit(0);
+      await meta.commit(1);
+
+      expect(meta.segmentID).toEqual(0);
+
+      // Write to new segment
+      await meta.write(1, 0);
+      await meta.write(1, 10);
+      await meta.write(1, 20);
+
+      expect(meta.write(0, 30)).rejects.toThrowError("Invalid segment ID 0. Out of order");
 
       await meta.close();
     });

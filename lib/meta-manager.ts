@@ -7,8 +7,9 @@ const META_FILE_MARKER_OFFSET = 0;
 const META_FILE_BASE_OFFSET = 4;
 const META_FILE_HEAD_OFFSET = 8;
 const META_FILE_COMMIT_OFFSET = 12;
+const META_FILE_SEGMENT_OFFSET = 16;
 
-const HEADER_SIZE = 16;
+const HEADER_SIZE = 20;
 const INDEX_SIZE = 8;
 /**
    MetaFileManager is responsible for managing the meta file of the WAL.
@@ -16,21 +17,22 @@ const INDEX_SIZE = 8;
     Layout:      
         Every Entry is written, using the following binary layout (big endian format):
     
-          ┌──────────────────┬───────────┬───────────┬─────────────┬───────────────────┐
-          │ File Marker (4B) │ Base (4B) │ Head (4B) │ Commit (4B) │ ...Index (8B)     │
-          └──────────────────┴───────────┴───────────┴─────────────┴───────────────────┘
+          ┌──────────────────┬───────────┬───────────┬─────────────┬──────────────┬───────────────────┐
+          │ File Marker (4B) │ Base (4B) │ Head (4B) │ Commit (4B) │ Segment (4B) | ...Index (8B)     │
+          └──────────────────┴───────────┴───────────┴─────────────┴──────────────┴───────────────────┘
     
         - File Marker = 32bit - WAL entry number for each record in order to implement a low-water mark
         - Base        = 32Bit - The base offset of the indexes. 0 most of the time. Base is only meaningful when indexes are split across many meta files so are a placeholder for future work.
         - Head        = 32bit - The next offset to be written to the WAL
         - Commit      = 32bit - The offset that has been committed to disk
+        - Segment     = 32bit - The segment ID of the current segment being written to
         - Index       = 68bit[] - The index entries for the WAL. Each index entry is 8 bytes long. The first 4 bytes are the segment ID and the second 4 bytes are the offset in the segment.
 
     Example (octets)...
 
-                Base      Head        Commit      Index 0                ...  Index 200
-                v           v           v           V                         v
-    49 44 58 24 00 00 00 00 00 00 00 02 00 00 00 01 00 00 00 01 00 00 00 ...  00 00 00 03 00 00 00 02 1f
+                Base      Head        Commit        Segment     Index 0              ...  Index 200
+                v           v           v           v           V                         v
+    49 44 58 24 00 00 00 00 00 00 00 02 00 00 00 01 00 00 00 03 00 00 00 01 00 00 00 ...  00 00 00 03 00 00 00 02 1f
 
     Entry at index 0: Segment ID = 1, Offset = 0
     Entry at index 200: Segment ID = 3, Offset = 543
@@ -114,6 +116,10 @@ export class MetaFileManager {
     return this.header.readInt32BE(META_FILE_COMMIT_OFFSET);
   }
 
+  get segmentID(): number {
+    return this.header.readUInt32BE(META_FILE_SEGMENT_OFFSET);
+  }
+
   isCommitted(index: number): boolean {
     return index <= this.commitIndex;
   }
@@ -183,6 +189,10 @@ export class MetaFileManager {
   }
 
   async write(segmentID: number, offset: number): Promise<number> {
+    if (segmentID < this.segmentID) {
+      throw new Error(`Invalid segment ID ${segmentID}. Out of order`);
+    }
+
     const index = this.localIndex(this.head);
     const indexFileOffset = HEADER_SIZE + index * INDEX_SIZE;
     const currentHead = this.head;
@@ -203,8 +213,13 @@ export class MetaFileManager {
 
     this.header.writeUInt32BE(this.head + 1, META_FILE_HEAD_OFFSET);
 
+    if (segmentID > this.segmentID) {
+      this.header.writeUInt32BE(segmentID, META_FILE_SEGMENT_OFFSET);
+    }
+
     if (!this.isBufferingEnabled) {
       await this.metaFile.write(this.header, META_FILE_HEAD_OFFSET, INT_SIZE, META_FILE_HEAD_OFFSET);
+      await this.metaFile.write(this.header, META_FILE_SEGMENT_OFFSET, INT_SIZE, META_FILE_SEGMENT_OFFSET);
     }
 
     if (this.isBufferingEnabled && this.updatesQueue.length >= this.maxBufferSize) {
@@ -215,7 +230,7 @@ export class MetaFileManager {
   }
 
   async sync(): Promise<void> {
-    await this.metaFile.write(this.header, META_FILE_HEAD_OFFSET, 2 * INT_SIZE, META_FILE_HEAD_OFFSET);
+    await this.metaFile.write(this.header, META_FILE_HEAD_OFFSET, 3 * INT_SIZE, META_FILE_HEAD_OFFSET);
 
     if (!this.updatesQueue || this.updatesQueue.length === 0) {
       return;
@@ -224,7 +239,6 @@ export class MetaFileManager {
     const buffer = Buffer.concat(this.updatesQueue);
 
     await this.metaFile.write(buffer, 0, buffer.length, this.updatesQueueFileOffset);
-    // await this.metaFile.write(this.header, META_FILE_COMMIT_OFFSET, INT_SIZE, META_FILE_COMMIT_OFFSET);
 
     this.updatesQueue = [];
     this.updatesQueueFileOffset = 0;
@@ -238,6 +252,10 @@ export class MetaFileManager {
     this.syncTimer = setInterval(() => {
       this.sync();
     }, this.autoSyncInterval);
+  }
+
+  async startCompaction(): Promise<void> {
+    await this.sync();
   }
 
   static async create(
