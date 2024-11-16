@@ -47,9 +47,9 @@ describe("Test segment reader ops", () => {
 
     expect(isRead).toBe(true);
 
-    const offset = reader.offset;
+    const index = reader.index;
 
-    expect(offset).toBe(0);
+    expect(index).toBe(0);
 
     reader.decode();
 
@@ -86,14 +86,14 @@ describe("Test segment reader ops", () => {
 
     expect(isRead).toBe(true);
 
-    const offset = reader.offset;
+    const index = reader.index;
 
-    expect(offset).toBe(0);
+    expect(index).toBe(0);
 
     try {
       reader.decode();
     } catch (e) {
-      expect(e.message).toBe("Detected WAL Entry corruption at WAL offset 0");
+      expect(e.message).toBe("Detected WAL Entry corruption at WAL index 0");
     }
 
     await wfile.close();

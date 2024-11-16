@@ -28,9 +28,10 @@ export class TextEntry implements IEntry {
     this.content = buf.subarray(4, 4 + this.length).toString();
   }
 
-  async read(r: Reader): Promise<Buffer> {
-    const length = await r.read(4);
-    const content = await r.read(length.readUInt32BE(0));
+  async read(r: Reader, offset?: number): Promise<Buffer> {
+    offset = offset || 0;
+    const length = await r.read(4, offset);
+    const content = await r.read(length.readUInt32BE(0), offset + 4);
 
     return Buffer.concat([length, content]);
   }
