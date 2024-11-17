@@ -59,6 +59,7 @@ export class WAL {
 
   /**
    * Initialize the WAL by loading the last segment file and the meta file.
+   *
    * Must be called before any other operation on the WAL.
    * If the WAL is already initialized, this function is a no-op.
    *
@@ -138,6 +139,8 @@ export class WAL {
     Close gracefully shuts down the writeAheadLog by making sure that all pending
     writes are completed and synced to disk before then closing the WAL segment file.
     Any future writes after the WAL has been closed will lead to an error.
+
+   *  @returns {Promise<void>}
    */
   public async close(): Promise<void> {
     await this.writeLock.runExclusive(async () => {
@@ -163,6 +166,12 @@ export class WAL {
     });
   }
 
+  /**
+   * Recover the WAL by replaying all entries from the last committed entry to the last entry.
+   * The handler function is called for each entry to decide whether to commit the entry or not.
+   * @param {(index: number, entry: IEntry) => Promise<boolean>} [handler] A function that is called for each entry to decide whether to commit the entry or not.
+   * @returns {Promise<void>}
+   */
   public async recover(handler?: (index: number, entry: IEntry) => Promise<boolean>): Promise<void> {
     if (this.isClosed) {
       throw new Error("WAL is closed");
@@ -192,6 +201,13 @@ export class WAL {
     }
   }
 
+  /**
+   * Get an entry from the WAL by its index.
+   *
+   * Could fail if the entry is not found or if the segment file is not found.
+   * @param {number} index
+   * @returns {Promise<IEntry>}
+   */
   public async getEntry(index: number): Promise<IEntry> {
     const pos = await this.metaManager.position(index);
     const segment = await fs.open(`${this.walFilePath}/${pos.segmentID}.wal`, "r");
