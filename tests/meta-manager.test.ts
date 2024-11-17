@@ -3,7 +3,6 @@ import path from "path";
 
 import { MetaFileManager } from "../lib/meta-manager";
 import { createRandomString } from "./utils";
-import { open } from "fs/promises";
 
 describe("Meta file manager ops", () => {
   const files: string[] = [];
@@ -209,7 +208,7 @@ describe("Meta file manager ops", () => {
 
       await meta.close();
 
-      meta = new MetaFileManager(await open(filePath, "r+"));
+      meta = new MetaFileManager(filePath);
       await meta.init();
 
       expect(meta.head).toEqual(6);
@@ -439,6 +438,75 @@ describe("Meta file manager ops", () => {
       await meta.write(1, 20);
 
       expect(meta.write(0, 30)).rejects.toThrowError("Invalid segment ID 0. Out of order");
+
+      await meta.close();
+    });
+
+    it("Should compact meta file", async () => {
+      const randomName = createRandomString(10);
+      const filePath = path.join(__dirname, `${randomName}.meta`);
+      files.push(filePath);
+      const meta = await MetaFileManager.create(filePath, {
+        bufferingEnabled: true,
+      });
+
+      let currIndex = 0;
+
+      // Write to segment 0
+      for (let i = 0; i < 100; i++, currIndex++) {
+        await meta.write(0, i * 10);
+        await meta.commit(currIndex);
+      }
+
+      // Write to segment 1
+      for (let i = 0; i < 100; i++, currIndex++) {
+        await meta.write(1, i * 10);
+        await meta.commit(currIndex);
+      }
+
+      // Write to segment 2
+      for (let i = 0; i < 100; i++, currIndex++) {
+        await meta.write(2, i * 10);
+        // Commit first 50 indexes
+        if (i < 50) {
+          await meta.commit(currIndex);
+        }
+      }
+
+      expect(meta.base).toEqual(0);
+      expect(meta.segmentID).toEqual(2);
+
+      const oldHead = meta.head;
+      const oldCommitIndex = meta.commitIndex;
+
+      await meta.compact();
+
+      expect(meta.base).toBe(oldCommitIndex + 1);
+      expect(meta.segmentID).toEqual(2);
+      expect(meta.head).toBe(oldHead);
+
+      const commitBuffer = Buffer.alloc(4);
+      commitBuffer.writeInt32BE(oldCommitIndex);
+
+      const headBuffer = Buffer.alloc(4);
+      headBuffer.writeInt32BE(oldHead);
+
+      const baseBuffer = Buffer.alloc(4);
+      baseBuffer.writeInt32BE(oldCommitIndex + 1);
+
+      const buffers = [Buffer.from("META"), baseBuffer, headBuffer, commitBuffer, Buffer.from([0, 0, 0, 2])];
+
+      for (let i = 50; i < 100; i++) {
+        const buffer = Buffer.alloc(8);
+        buffer.writeUInt32BE(2);
+        buffer.writeUInt32BE(i * 10, 4);
+        buffers.push(buffer);
+      }
+
+      await meta.sync();
+      const content = readFileSync(filePath);
+
+      expect(content).toEqual(Buffer.concat(buffers));
 
       await meta.close();
     });
@@ -662,7 +730,7 @@ describe("Meta file manager ops", () => {
 
       await meta.close();
 
-      meta = new MetaFileManager(await open(filePath, "r+"));
+      meta = new MetaFileManager(filePath);
       await meta.init();
 
       expect(meta.head).toEqual(6);
@@ -890,6 +958,75 @@ describe("Meta file manager ops", () => {
       await meta.write(1, 20);
 
       expect(meta.write(0, 30)).rejects.toThrowError("Invalid segment ID 0. Out of order");
+
+      await meta.close();
+    });
+
+    it("Should compact meta file", async () => {
+      const randomName = createRandomString(10);
+      const filePath = path.join(__dirname, `${randomName}.meta`);
+      files.push(filePath);
+      const meta = await MetaFileManager.create(filePath, {
+        bufferingEnabled: false,
+      });
+
+      let currIndex = 0;
+
+      // Write to segment 0
+      for (let i = 0; i < 100; i++, currIndex++) {
+        await meta.write(0, i * 10);
+        await meta.commit(currIndex);
+      }
+
+      // Write to segment 1
+      for (let i = 0; i < 100; i++, currIndex++) {
+        await meta.write(1, i * 10);
+        await meta.commit(currIndex);
+      }
+
+      // Write to segment 2
+      for (let i = 0; i < 100; i++, currIndex++) {
+        await meta.write(2, i * 10);
+        // Commit first 50 indexes
+        if (i < 50) {
+          await meta.commit(currIndex);
+        }
+      }
+
+      expect(meta.base).toEqual(0);
+      expect(meta.segmentID).toEqual(2);
+
+      const oldHead = meta.head;
+      const oldCommitIndex = meta.commitIndex;
+
+      await meta.compact();
+
+      expect(meta.base).toBe(oldCommitIndex + 1);
+      expect(meta.segmentID).toEqual(2);
+      expect(meta.head).toBe(oldHead);
+
+      const commitBuffer = Buffer.alloc(4);
+      commitBuffer.writeInt32BE(oldCommitIndex);
+
+      const headBuffer = Buffer.alloc(4);
+      headBuffer.writeInt32BE(oldHead);
+
+      const baseBuffer = Buffer.alloc(4);
+      baseBuffer.writeInt32BE(oldCommitIndex + 1);
+
+      const buffers = [Buffer.from("META"), baseBuffer, headBuffer, commitBuffer, Buffer.from([0, 0, 0, 2])];
+
+      for (let i = 50; i < 100; i++) {
+        const buffer = Buffer.alloc(8);
+        buffer.writeUInt32BE(2);
+        buffer.writeUInt32BE(i * 10, 4);
+        buffers.push(buffer);
+      }
+
+      await meta.sync();
+      const content = readFileSync(filePath);
+
+      expect(content).toEqual(Buffer.concat(buffers));
 
       await meta.close();
     });

@@ -1,4 +1,5 @@
-import { FileHandle, open } from "fs/promises";
+import { FileHandle, open, rename, unlink } from "fs/promises";
+import path from "path";
 
 const META_FILE_MARKER = "META";
 const INT_SIZE = 4;
@@ -11,6 +12,7 @@ const META_FILE_SEGMENT_OFFSET = 16;
 
 const HEADER_SIZE = 20;
 const INDEX_SIZE = 8;
+const COMPACTION_BATCH_SIZE = 1000;
 /**
    MetaFileManager is responsible for managing the meta file of the WAL.
   
@@ -40,6 +42,7 @@ const INDEX_SIZE = 8;
     
  */
 export class MetaFileManager {
+  private metaFilePath: string;
   private metaFile: FileHandle;
   private header: Buffer = null;
 
@@ -50,8 +53,8 @@ export class MetaFileManager {
   private autoSyncInterval = 1000;
   private syncTimer: NodeJS.Timeout = null;
 
-  constructor(metaFile: FileHandle, opts?: MetaManagerOptions) {
-    this.metaFile = metaFile;
+  constructor(metaFilePath: string, opts?: MetaManagerOptions) {
+    this.metaFilePath = metaFilePath;
     this.isBufferingEnabled = opts?.bufferingEnabled ?? true;
 
     if (this.isBufferingEnabled) {
@@ -68,6 +71,8 @@ export class MetaFileManager {
       // File already opened.
       return;
     }
+
+    this.metaFile = await open(path.join(this.metaFilePath), "r+");
 
     const header = Buffer.alloc(HEADER_SIZE);
     await this.metaFile.read(header, 0, HEADER_SIZE, META_FILE_MARKER_OFFSET);
@@ -244,6 +249,53 @@ export class MetaFileManager {
     this.updatesQueueFileOffset = 0;
   }
 
+  async compact(): Promise<void> {
+    await this.sync();
+    // create a new meta file.
+    const dir = path.dirname(this.metaFilePath);
+    const newMetaFile = await open(path.join(dir, "index.META.tmp"), "w+");
+    const newHeader = Buffer.alloc(HEADER_SIZE);
+    const newBase = this.commitIndex + 1;
+
+    newHeader.write(META_FILE_MARKER, META_FILE_MARKER_OFFSET);
+    newHeader.writeUInt32BE(newBase, META_FILE_BASE_OFFSET);
+    newHeader.writeUInt32BE(this.head, META_FILE_HEAD_OFFSET);
+    newHeader.writeInt32BE(this.commitIndex, META_FILE_COMMIT_OFFSET);
+    newHeader.writeUInt32BE(this.segmentID, META_FILE_SEGMENT_OFFSET);
+
+    await newMetaFile.write(newHeader, 0, HEADER_SIZE, 0);
+
+    // Move all uncommitted entries to the new file.
+    let currFileOffset = HEADER_SIZE + this.localIndex(this.commitIndex + 1) * INDEX_SIZE;
+    let newFileOffset = HEADER_SIZE;
+    let hasMore = true;
+
+    while (hasMore) {
+      const indexBuffer = Buffer.alloc(COMPACTION_BATCH_SIZE * INDEX_SIZE);
+      const res = await this.metaFile.read(indexBuffer, 0, indexBuffer.length, currFileOffset);
+
+      if (res.bytesRead < indexBuffer.length) {
+        hasMore = false;
+      }
+
+      await newMetaFile.write(indexBuffer, 0, res.bytesRead, newFileOffset);
+
+      newFileOffset += res.bytesRead;
+      currFileOffset += res.bytesRead;
+    }
+
+    // Delete the old file and rename the new file.
+    await this.metaFile.close();
+    await newMetaFile.close();
+    await unlink(this.metaFilePath);
+    await rename(path.join(dir, "index.META.tmp"), this.metaFilePath);
+
+    // this.metaFile = await open(this.metaFilePath, "r+");
+    this.header = null;
+
+    await this.init();
+  }
+
   private localIndex(logOffset: number): number {
     return logOffset - this.base;
   }
@@ -254,10 +306,6 @@ export class MetaFileManager {
     }, this.autoSyncInterval);
   }
 
-  async startCompaction(): Promise<void> {
-    await this.sync();
-  }
-
   static async create(
     filePath: string,
     opts?: {
@@ -265,11 +313,11 @@ export class MetaFileManager {
       maxBufferSize?: number;
     },
   ): Promise<MetaFileManager> {
-    const metaFile = await open(filePath, "w+");
-    const metaFileManager = new MetaFileManager(metaFile, opts);
+    const metaFileManager = new MetaFileManager(filePath, opts);
+    metaFileManager.metaFile = await open(filePath, "w+");
 
     const header = Buffer.alloc(HEADER_SIZE);
-    await metaFile.read(header, 0, HEADER_SIZE, 0);
+    await metaFileManager.metaFile.read(header, 0, HEADER_SIZE, 0);
 
     if (header.toString("ascii", META_FILE_MARKER_OFFSET, META_FILE_BASE_OFFSET) !== META_FILE_MARKER) {
       // New file. Write the header.
@@ -278,7 +326,7 @@ export class MetaFileManager {
       header.writeUInt32BE(0, META_FILE_HEAD_OFFSET);
       header.writeInt32BE(-1, META_FILE_COMMIT_OFFSET);
 
-      await metaFile.write(header, 0, HEADER_SIZE, 0);
+      await metaFileManager.metaFile.write(header, 0, HEADER_SIZE, 0);
     }
 
     metaFileManager.header = header;
