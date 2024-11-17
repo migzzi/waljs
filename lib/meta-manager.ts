@@ -1,5 +1,6 @@
 import { FileHandle, open, rename, unlink } from "fs/promises";
 import path from "path";
+import { moveFile } from "./utils";
 
 const META_FILE_MARKER = "META";
 const INT_SIZE = 4;
@@ -153,6 +154,11 @@ export class MetaFileManager {
     offset: number;
     // length: number;
   }> {
+    if (logIndex <= this.base) {
+      // Maybe the log has been compacted.
+      throw new Error(`Invalid log offset ${logIndex}. Out of bounds`);
+    }
+
     if (logIndex >= this.head) {
       throw new Error(`Invalid log offset ${logIndex}. Out of bounds`);
     }
@@ -288,6 +294,55 @@ export class MetaFileManager {
     await this.metaFile.close();
     await newMetaFile.close();
     await unlink(this.metaFilePath);
+    await rename(path.join(dir, "index.META.tmp"), this.metaFilePath);
+
+    // this.metaFile = await open(this.metaFilePath, "r+");
+    this.header = null;
+
+    await this.init();
+  }
+
+  async archive(archiveDir: string): Promise<void> {
+    await this.sync();
+    // create a new meta file.
+    const dir = path.dirname(this.metaFilePath);
+    const newMetaFile = await open(path.join(dir, "index.META.tmp"), "w+");
+    const newHeader = Buffer.alloc(HEADER_SIZE);
+    const newBase = this.commitIndex + 1;
+
+    newHeader.write(META_FILE_MARKER, META_FILE_MARKER_OFFSET);
+    newHeader.writeUInt32BE(newBase, META_FILE_BASE_OFFSET);
+    newHeader.writeUInt32BE(this.head, META_FILE_HEAD_OFFSET);
+    newHeader.writeInt32BE(this.commitIndex, META_FILE_COMMIT_OFFSET);
+    newHeader.writeUInt32BE(this.segmentID, META_FILE_SEGMENT_OFFSET);
+
+    await newMetaFile.write(newHeader, 0, HEADER_SIZE, 0);
+
+    // Move all uncommitted entries to the new file.
+    let currFileOffset = HEADER_SIZE + this.localIndex(this.commitIndex + 1) * INDEX_SIZE;
+    let newFileOffset = HEADER_SIZE;
+    let hasMore = true;
+
+    while (hasMore) {
+      const indexBuffer = Buffer.alloc(COMPACTION_BATCH_SIZE * INDEX_SIZE);
+      const res = await this.metaFile.read(indexBuffer, 0, indexBuffer.length, currFileOffset);
+
+      if (res.bytesRead < indexBuffer.length) {
+        hasMore = false;
+      }
+
+      await newMetaFile.write(indexBuffer, 0, res.bytesRead, newFileOffset);
+
+      newFileOffset += res.bytesRead;
+      currFileOffset += res.bytesRead;
+    }
+
+    // Truncate the old file.
+    await this.metaFile.truncate(HEADER_SIZE + this.localIndex(this.commitIndex + 1) * INDEX_SIZE);
+    // move the old file and rename the new file.
+    await this.metaFile.close();
+    await newMetaFile.close();
+    await moveFile(this.metaFilePath, path.join(archiveDir, path.basename(this.metaFilePath)));
     await rename(path.join(dir, "index.META.tmp"), this.metaFilePath);
 
     // this.metaFile = await open(this.metaFilePath, "r+");
