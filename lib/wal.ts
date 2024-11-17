@@ -5,12 +5,14 @@ import * as glob from "glob";
 import path from "path";
 import { EntryType, IEntry } from "./entry";
 import { MetaFileManager, MetaManagerOptions } from "./meta-manager";
-import { SegmentWriter } from "./segment-writer";
 import { SegmentReader } from "./segment-reader";
+import { SegmentWriter } from "./segment-writer";
+import { checkFileExists } from "./utils";
 
 type WALOptions = {
   logger?: (level: string, msg: string, attrs?: Record<string, unknown>) => void;
   maxSegmentSize?: number;
+  minEntriesForCompaction?: number;
   // onSync?: (() => void)[];
   meta?: MetaManagerOptions;
   // syncDelay?: number;
@@ -25,6 +27,7 @@ export class WAL {
   private metaManagerOpts: MetaManagerOptions;
 
   private maxSegmentSize: number = 10 * 1024 * 1024; // 10MB
+  private minEntriesForCompaction = 1000;
   // private onSync: (() => void)[] = [];
   private syncDelay = 0;
 
@@ -48,11 +51,19 @@ export class WAL {
   constructor(private walFilePath: string, opts?: WALOptions) {
     this.logger = opts?.logger || this.logger;
     this.maxSegmentSize = opts?.maxSegmentSize || this.maxSegmentSize;
+    this.minEntriesForCompaction = opts?.minEntriesForCompaction || this.minEntriesForCompaction;
     // this.onSync = opts?.onSync || this.onSync;
     this.metaManagerOpts = opts?.meta;
     // this.syncDelay = opts?.syncDelay || this.syncDelay;
   }
 
+  /**
+   * Initialize the WAL by loading the last segment file and the meta file.
+   * Must be called before any other operation on the WAL.
+   * If the WAL is already initialized, this function is a no-op.
+   *
+   * @returns {Promise<void>}
+   */
   async init(): Promise<void> {
     if (this._isInitialized) {
       return;
@@ -192,6 +203,64 @@ export class WAL {
     return entry;
   }
 
+  /**
+   * Compact the WAL by removing all segments before the segment of the last committed entry.
+   * Will also compact the meta file.
+   *
+   * NOTE: This operation is blocking and should be used with caution. all WAL writes will be locked during compaction.
+   *
+   */
+  public async compact(): Promise<boolean> {
+    return await this.writeLock.runExclusive(async () => {
+      if (
+        this.metaManager.commitIndex === -1 ||
+        this.metaManager.commitIndex === this.metaManager.lastIndex ||
+        this.metaManager.commitIndex - this.metaManager.base < this.minEntriesForCompaction
+      ) {
+        // No compaction needed.
+        return false;
+      }
+
+      // sync all pending writes.
+      await this.sync();
+
+      // get position of the last committed entry
+      const { segmentID } = await this.metaManager.position(this.commitIndex);
+
+      if (segmentID === 0) {
+        // No compaction needed.
+        return false;
+      }
+
+      // get the first segment recorded in the meta file
+      const { segmentID: firstSegmentID } = await this.metaManager.position(this.metaManager.base);
+
+      // if the last committed entry is in the first segment, no compaction needed
+      if (segmentID === firstSegmentID) {
+        return false;
+      }
+
+      this.logger("debug", "Compacting WAL", {
+        firstSegmentID,
+        lastSegmentID: segmentID - 1,
+      });
+
+      // compact the meta file
+      await this.metaManager.compact();
+
+      // delete all the segments before the segment of the last committed entry.
+      await Promise.all(
+        Array.from({ length: segmentID - firstSegmentID }, (_, i) => {
+          return fs.unlink(path.join(this.walFilePath, `${firstSegmentID + i}.wal`));
+        }),
+      );
+
+      this.logger("debug", "Compaction done");
+
+      return true;
+    });
+  }
+
   private async loadSegmentFilesNames(): Promise<string[]> {
     const dirs = await glob.glob(`${this.walFilePath}/*.wal`);
 
@@ -218,7 +287,7 @@ export class WAL {
 
     this.logger("debug", "Loading existing meta file.");
 
-    this.metaManager = new MetaFileManager(await fs.open(metaFilePath, "r+"), this.metaManagerOpts);
+    this.metaManager = new MetaFileManager(metaFilePath, this.metaManagerOpts);
 
     await this.metaManager.init();
   }
@@ -394,14 +463,5 @@ export class WAL {
 
   isCommitted(index: number): boolean {
     return this.metaManager.isCommitted(index);
-  }
-}
-
-async function checkFileExists(filePath: string): Promise<boolean> {
-  try {
-    await fs.access(filePath);
-    return true;
-  } catch {
-    return false;
   }
 }
