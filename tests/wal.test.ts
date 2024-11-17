@@ -9,6 +9,7 @@ import { SegmentWriter } from "../lib/segment-writer";
 import { WAL } from "../lib/wal";
 import { createRandomString, TextEntry } from "./utils";
 import { glob } from "glob";
+import { MetaFileManager } from "../lib/meta-manager";
 
 describe("Test WAL ops", () => {
   const dirs: string[] = [];
@@ -263,6 +264,307 @@ describe("Test WAL ops", () => {
     const actualHash = createHash("sha1").update(allContent).digest("hex");
 
     expect(actualHash).toEqual(expectedHash);
+
+    await wal.close();
+  });
+
+  it("Should compact & remove older segments", async () => {
+    const randomDirName = createRandomString(10);
+    const walDirPath = path.join(__dirname, randomDirName);
+    dirs.push(walDirPath);
+    mkdirSync(walDirPath);
+
+    const wal = new WAL(walDirPath, {
+      maxSegmentSize: 1024,
+      minEntriesForCompaction: 100,
+    });
+
+    await wal.init();
+
+    // Generate entries.
+    await Promise.all(
+      Array.from({ length: 1000 }, (_, i) => {
+        return wal.write(TextEntry.from(`test-${i}`));
+      }),
+    );
+
+    for (let i = 0; i < 500; i++) {
+      await wal.commit(i);
+    }
+
+    // await new Promise((resolve) => setTimeout(resolve, 10000));
+
+    const oldCommit = wal.commitIndex;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const metaManager = (wal as any).metaManager as MetaFileManager;
+    const { segmentID: segmentOfLastCommitted } = await metaManager.position(oldCommit);
+
+    const deletedSegments = readdirSync(walDirPath)
+      .filter((file) => file.endsWith(".wal") && parseInt(file) < segmentOfLastCommitted)
+      .sort((a, b) => parseInt(a) - parseInt(b));
+
+    await wal.compact();
+
+    const currSegments = readdirSync(walDirPath)
+      .filter((file) => file.endsWith(".wal"))
+      .sort((a, b) => parseInt(a) - parseInt(b));
+
+    // current segments shouldn't include the deleted segments.
+    expect(parseInt(deletedSegments[deletedSegments.length - 1])).toBeLessThan(parseInt(currSegments[0]));
+
+    await wal.close();
+  });
+
+  it("Should not compact - not enough entries", async () => {
+    const randomDirName = createRandomString(10);
+    const walDirPath = path.join(__dirname, randomDirName);
+    dirs.push(walDirPath);
+    mkdirSync(walDirPath);
+
+    const wal = new WAL(walDirPath, {
+      maxSegmentSize: 1024,
+      minEntriesForCompaction: 1000,
+    });
+
+    await wal.init();
+
+    // Generate entries.
+    await Promise.all(
+      Array.from({ length: 1000 }, (_, i) => {
+        return wal.write(TextEntry.from(`test-${i}`));
+      }),
+    );
+
+    for (let i = 0; i < 500; i++) {
+      await wal.commit(i);
+    }
+
+    const currentSegmentsBefore = readdirSync(walDirPath).filter((file) => file.endsWith(".wal") && parseInt(file));
+
+    const didCompact = await wal.compact();
+
+    expect(didCompact).toBe(false);
+
+    const currentSegmentsAfter = readdirSync(walDirPath).filter((file) => file.endsWith(".wal") && parseInt(file));
+
+    expect(currentSegmentsAfter.length).toBe(currentSegmentsBefore.length);
+    await wal.close();
+  });
+
+  it("Should not compact - first segment is active", async () => {
+    const randomDirName = createRandomString(10);
+    const walDirPath = path.join(__dirname, randomDirName);
+    dirs.push(walDirPath);
+    mkdirSync(walDirPath);
+
+    const wal = new WAL(walDirPath, {
+      maxSegmentSize: 10 * 1024 * 1024,
+      minEntriesForCompaction: 10,
+    });
+
+    await wal.init();
+
+    // Generate entries.
+    await Promise.all(
+      Array.from({ length: 100 }, (_, i) => {
+        return wal.write(TextEntry.from(`test-${i}`));
+      }),
+    );
+
+    for (let i = 0; i < 50; i++) {
+      await wal.commit(i);
+    }
+
+    const currentSegmentsBefore = readdirSync(walDirPath).filter((file) => file.endsWith(".wal") && parseInt(file));
+
+    const didCompact = await wal.compact();
+
+    expect(didCompact).toBe(false);
+
+    const currentSegmentsAfter = readdirSync(walDirPath).filter((file) => file.endsWith(".wal") && parseInt(file));
+
+    expect(currentSegmentsAfter.length).toBe(currentSegmentsBefore.length);
+    await wal.close();
+  });
+
+  it("Should archive & move older segments", async () => {
+    const randomDirName = createRandomString(10);
+    const walDirPath = path.join(__dirname, randomDirName);
+    dirs.push(walDirPath);
+    mkdirSync(walDirPath);
+
+    const wal = new WAL(walDirPath, {
+      maxSegmentSize: 1024,
+      minEntriesForCompaction: 100,
+    });
+
+    await wal.init();
+
+    // Generate entries.
+    await Promise.all(
+      Array.from({ length: 1000 }, (_, i) => {
+        return wal.write(TextEntry.from(`test-${i}`));
+      }),
+    );
+
+    for (let i = 0; i < 500; i++) {
+      await wal.commit(i);
+    }
+
+    // await new Promise((resolve) => setTimeout(resolve, 10000));
+
+    const oldCommit = wal.commitIndex;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const metaManager = (wal as any).metaManager as MetaFileManager;
+    const { segmentID: segmentOfLastCommitted } = await metaManager.position(oldCommit);
+
+    const deletedSegments = readdirSync(walDirPath)
+      .filter((file) => file.endsWith(".wal") && parseInt(file) < segmentOfLastCommitted)
+      .sort((a, b) => parseInt(a) - parseInt(b));
+
+    const archiveDirPath = path.join(walDirPath, "archive");
+
+    mkdirSync(archiveDirPath);
+
+    await wal.archive(archiveDirPath);
+
+    const currSegments = readdirSync(walDirPath)
+      .filter((file) => file.endsWith(".wal"))
+      .sort((a, b) => parseInt(a) - parseInt(b));
+
+    // current segments shouldn't include the deleted segments.
+    expect(parseInt(deletedSegments[deletedSegments.length - 1])).toBeLessThan(parseInt(currSegments[0]));
+
+    const archivedSegments = readdirSync(archiveDirPath)
+      .filter((file) => file.endsWith(".wal"))
+      .sort((a, b) => parseInt(a) - parseInt(b));
+
+    expect(archivedSegments).toEqual(deletedSegments);
+
+    await wal.close();
+  });
+
+  it("Should not archive - not enough entries", async () => {
+    const randomDirName = createRandomString(10);
+    const walDirPath = path.join(__dirname, randomDirName);
+    dirs.push(walDirPath);
+    mkdirSync(walDirPath);
+
+    const wal = new WAL(walDirPath, {
+      maxSegmentSize: 1024,
+      minEntriesForCompaction: 1000,
+    });
+
+    await wal.init();
+
+    // Generate entries.
+    await Promise.all(
+      Array.from({ length: 1000 }, (_, i) => {
+        return wal.write(TextEntry.from(`test-${i}`));
+      }),
+    );
+
+    for (let i = 0; i < 500; i++) {
+      await wal.commit(i);
+    }
+
+    const currentSegmentsBefore = readdirSync(walDirPath).filter((file) => file.endsWith(".wal") && parseInt(file));
+
+    const archiveDirPath = path.join(walDirPath, "archive");
+
+    mkdirSync(archiveDirPath);
+
+    const didArchive = await wal.archive(archiveDirPath);
+
+    expect(didArchive).toBe(false);
+
+    const currentSegmentsAfter = readdirSync(walDirPath).filter((file) => file.endsWith(".wal") && parseInt(file));
+
+    expect(currentSegmentsAfter.length).toBe(currentSegmentsBefore.length);
+
+    const archivedSegments = readdirSync(archiveDirPath);
+
+    expect(archivedSegments.length).toBe(0);
+
+    await wal.close();
+  });
+
+  it("Should not archive - first segment is active", async () => {
+    const randomDirName = createRandomString(10);
+    const walDirPath = path.join(__dirname, randomDirName);
+    dirs.push(walDirPath);
+    mkdirSync(walDirPath);
+
+    const wal = new WAL(walDirPath, {
+      maxSegmentSize: 10 * 1024 * 1024,
+      minEntriesForCompaction: 10,
+    });
+
+    await wal.init();
+
+    // Generate entries.
+    await Promise.all(
+      Array.from({ length: 100 }, (_, i) => {
+        return wal.write(TextEntry.from(`test-${i}`));
+      }),
+    );
+
+    for (let i = 0; i < 50; i++) {
+      await wal.commit(i);
+    }
+
+    const currentSegmentsBefore = readdirSync(walDirPath).filter((file) => file.endsWith(".wal") && parseInt(file));
+
+    const archiveDirPath = path.join(walDirPath, "archive");
+
+    mkdirSync(archiveDirPath);
+
+    const didArchive = await wal.archive(archiveDirPath);
+
+    expect(didArchive).toBe(false);
+
+    const currentSegmentsAfter = readdirSync(walDirPath).filter((file) => file.endsWith(".wal") && parseInt(file));
+
+    expect(currentSegmentsAfter.length).toBe(currentSegmentsBefore.length);
+
+    const archivedSegments = readdirSync(archiveDirPath);
+
+    expect(archivedSegments.length).toBe(0);
+
+    await wal.close();
+  });
+
+  it("Should throw when trying to get compacted entry", async () => {
+    const randomDirName = createRandomString(10);
+    const walDirPath = path.join(__dirname, randomDirName);
+    dirs.push(walDirPath);
+    mkdirSync(walDirPath);
+
+    const wal = new WAL(walDirPath, {
+      maxSegmentSize: 1024,
+      minEntriesForCompaction: 100,
+    });
+
+    await wal.init();
+
+    // Generate entries.
+    await Promise.all(
+      Array.from({ length: 1000 }, (_, i) => {
+        return wal.write(TextEntry.from(`test-${i}`));
+      }),
+    );
+
+    for (let i = 0; i < 500; i++) {
+      await wal.commit(i);
+    }
+
+    await wal.compact();
+
+    expect(wal.getEntry(0)).rejects.toThrow("Invalid log offset 0. Out of bounds");
+
+    const entry = await wal.getEntry(800);
+
+    expect(entry).not.toBeNull();
 
     await wal.close();
   });

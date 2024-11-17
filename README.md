@@ -16,6 +16,12 @@ The main goal of a Write-ahead Log (WAL) is to make the application more durable
   - [Installation](#installation)
   - [Initialization](#initialization)
   - [Usage](#usage)
+    - [Write](#write)
+    - [Recovery](#recovery)
+    - [Compaction](#compaction)
+      - [Compact](#compact)
+      - [Archive](#archive)
+      - [Closing](#closing)
   - [Configuration](#configuration)
   - [How it works](#how-it-works)
   - [Benchmarks](#benchmarks)
@@ -56,6 +62,8 @@ await wal.init();
 
 ## Usage
 
+### Write
+
 Use `write` to write an entry to the wal.
 
 ```ts
@@ -63,6 +71,8 @@ await wal.write(new EntryExample1(data1));
 await wal.write(new EntryExample1(data2));
 await wal.write(new EntryExample2(data3));
 ```
+
+### Recovery
 
 You can also recover the WAL using the following call.
 
@@ -75,6 +85,46 @@ await wal.recover(async (index, entry): boolean => {
   return true; // Return false to stop the recovery process.
 }); // Will recover all entries.
 ```
+
+### Compaction
+
+#### Compact
+
+You can compact the WAL using the following call.
+
+```ts
+await wal.compact(); // Will remove all committed entries and segments.
+// Method returns a boolean indicating if the compact was done.
+```
+
+This will remove all committed entries from the WAL and all dead segments and keep the uncommitted entries.
+
+#### Archive
+
+Or if you don't want to delete older entries and keep them on the side for later you can use the following to archive the WAL into a separate archive directory while keeping the uncommitted entries and active segments in the WAL directory.
+
+```ts
+const archived = await wal.archive(archivePath); // Will move all uncommitted entries and segments to the archive directory.
+// Method returns a boolean indicating if the archive was done.
+```
+
+> [!NOTE]
+> This library takes no automatic action to compact/archive the WAL. You need to call these methods manually based on your application's requirements.
+> 
+> We encourage you to either use the `compact` or `archive` method regularly to keep the WAL size in check.
+>
+
+
+> [!IMPORTANT]
+> `archive` and `compact` methods will return boolean indicating if the operation was successful or not.
+>
+> If the operation was not successful, it means that the WAL is in a state where it cannot be compacted or archived.
+> i.e. there are not enough committed entries to compact or there are no **dead segments** *(Segments that has all its entries committed)* to archive.
+>
+> You can control the minimum number of entries required for compaction using the `minEntriesForCompaction` configuration described [below](#configuration).
+> 
+
+#### Closing
 
 When you're done using the WAL, you can stop it using the following call.
 
@@ -93,6 +143,10 @@ await wal.close();
   // The maximum size of a single WAL segment file in bytes. 
   // Default is 10MB.
   maxSegmentSize?: number;
+
+  // The minimum number of committed entries required to be ready for compaction.
+  // Default is 1000 entries.
+  minEntriesForCompaction?: number;
 
   // Configuration for metadata file.
   meta?: {
@@ -160,9 +214,9 @@ These benchmarks are run on a machine with the following specifications:
 
 <!-- ![Alt text](resources/cache-hit-benchmark-chart.png) -->
 
-| name                       | ops     | margin | percentSlower |
-| -------------------------- | ------- | ------ | ------------- |
-| WAL write with sync        | 55607   | +-4.7% | 0             |
+| name                       | ops     | margin |
+| -------------------------- | ------- | ------ |
+| WAL write with sync        | 56317   | ±4.95% |
 
 ## Contributing
 
@@ -183,6 +237,6 @@ This work was inspired by the [WAL implementation in Go by fgrosse](https://gith
 ## What's next?
 
 - [x] Add support for WAL Recovery
-- [ ] Add support for WAL compaction
-- [ ] Add support for WAL encryption
+- [x] Add support for WAL compaction
 - [ ] Add support for WAL compression
+- [ ] Add support for WAL encryption
