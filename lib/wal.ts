@@ -7,7 +7,7 @@ import { EntryType, IEntry } from "./entry";
 import { MetaFileManager, MetaManagerOptions } from "./meta-manager";
 import { SegmentReader } from "./segment-reader";
 import { SegmentWriter } from "./segment-writer";
-import { checkFileExists } from "./utils";
+import { checkFileExists, moveFile } from "./utils";
 
 type WALOptions = {
   logger?: (level: string, msg: string, attrs?: Record<string, unknown>) => void;
@@ -256,6 +256,69 @@ export class WAL {
       );
 
       this.logger("debug", "Compaction done");
+
+      return true;
+    });
+  }
+
+  /**
+   * Archive the WAL by moving all segments before the segment of the last committed entry to the given directory.
+   * Will also compact the meta file.
+   *
+   * NOTE: This operation is blocking and should be used with caution. all WAL writes will be locked during archiving.
+   *
+   * @param {string} archiveDir The directory to move the segments to.
+   * @returns {Promise<boolean>} True if the archive was successful, false otherwise.
+   */
+  public async archive(archiveDir: string): Promise<boolean> {
+    return await this.writeLock.runExclusive(async () => {
+      if (
+        this.metaManager.commitIndex === -1 ||
+        this.metaManager.commitIndex === this.metaManager.lastIndex ||
+        this.metaManager.commitIndex - this.metaManager.base < this.minEntriesForCompaction
+      ) {
+        // No compaction needed.
+        return false;
+      }
+
+      // sync all pending writes.
+      await this.sync();
+
+      // get position of the last committed entry
+      const { segmentID } = await this.metaManager.position(this.commitIndex);
+
+      if (segmentID === 0) {
+        // No compaction needed.
+        return false;
+      }
+
+      // get the first segment recorded in the meta file
+      const { segmentID: firstSegmentID } = await this.metaManager.position(this.metaManager.base);
+
+      // if the last committed entry is in the first segment, no compaction needed
+      if (segmentID === firstSegmentID) {
+        return false;
+      }
+
+      this.logger("debug", "Archiving WAL", {
+        firstSegmentID,
+        lastSegmentID: segmentID - 1,
+      });
+
+      // compact the meta file
+      await this.metaManager.archive(archiveDir);
+
+      // move all the segments before the segment of the last committed entry to the archive directory.
+      await Promise.all(
+        Array.from({ length: segmentID - firstSegmentID }, (_, i) => {
+          return moveFile(
+            path.join(this.walFilePath, `${firstSegmentID + i}.wal`),
+            path.join(archiveDir, `${firstSegmentID + i}.wal`),
+          );
+        }),
+      );
+
+      this.logger("debug", "Archiving done");
 
       return true;
     });
