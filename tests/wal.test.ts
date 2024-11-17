@@ -533,6 +533,41 @@ describe("Test WAL ops", () => {
 
     await wal.close();
   });
+
+  it("Should throw when trying to get compacted entry", async () => {
+    const randomDirName = createRandomString(10);
+    const walDirPath = path.join(__dirname, randomDirName);
+    dirs.push(walDirPath);
+    mkdirSync(walDirPath);
+
+    const wal = new WAL(walDirPath, {
+      maxSegmentSize: 1024,
+      minEntriesForCompaction: 100,
+    });
+
+    await wal.init();
+
+    // Generate entries.
+    await Promise.all(
+      Array.from({ length: 1000 }, (_, i) => {
+        return wal.write(TextEntry.from(`test-${i}`));
+      }),
+    );
+
+    for (let i = 0; i < 500; i++) {
+      await wal.commit(i);
+    }
+
+    await wal.compact();
+
+    expect(wal.getEntry(0)).rejects.toThrow("Invalid log offset 0. Out of bounds");
+
+    const entry = await wal.getEntry(800);
+
+    expect(entry).not.toBeNull();
+
+    await wal.close();
+  });
 });
 
 async function readWALContent(walDirPath: string): Promise<Buffer> {
