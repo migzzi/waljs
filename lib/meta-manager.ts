@@ -154,7 +154,7 @@ export class MetaFileManager {
     offset: number;
     // length: number;
   }> {
-    if (logIndex <= this.base) {
+    if (logIndex < this.base) {
       // Maybe the log has been compacted.
       throw new Error(`Invalid log offset ${logIndex}. Out of bounds`);
     }
