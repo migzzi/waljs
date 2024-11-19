@@ -17,11 +17,12 @@ The main goal of a Write-ahead Log (WAL) is to make the application more durable
   - [Initialization](#initialization)
   - [Usage](#usage)
     - [Write](#write)
+    - [commit](#commit)
     - [Recovery](#recovery)
     - [Compaction](#compaction)
       - [Compact](#compact)
       - [Archive](#archive)
-      - [Closing](#closing)
+    - [Closing](#closing)
   - [Configuration](#configuration)
   - [How it works](#how-it-works)
   - [Benchmarks](#benchmarks)
@@ -70,6 +71,17 @@ Use `write` to write an entry to the wal.
 await wal.write(new EntryExample1(data1));
 await wal.write(new EntryExample1(data2));
 await wal.write(new EntryExample2(data3));
+```
+
+### commit
+
+Use `commit`/`commitUpTo` to commit the entries to the wal.
+
+```ts
+await wal.commit(index); // Will commit entry at the given index.
+
+// Or, you can use the following to commit all entries up to the given index.
+await wal.commitUpTo(index); 
 ```
 
 ### Recovery
@@ -124,7 +136,7 @@ const archived = await wal.archive(archivePath); // Will move all uncommitted en
 > You can control the minimum number of entries required for compaction using the `minEntriesForCompaction` configuration described [below](#configuration).
 > 
 
-#### Closing
+### Closing
 
 When you're done using the WAL, you can stop it using the following call.
 
