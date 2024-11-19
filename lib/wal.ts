@@ -136,6 +136,20 @@ export class WAL {
   }
 
   /**
+   * Commit marks the entries up to the given index as committed.
+   * @param {number} index
+   */
+  public async commitUpTo(index: number): Promise<void> {
+    if (index <= this.metaManager.commitIndex) {
+      throw new Error("Invalid index. Index is already committed.");
+    }
+
+    for (let i = this.metaManager.commitIndex + 1; i <= index; i++) {
+      await this.metaManager.commit(i);
+    }
+  }
+
+  /**
     Close gracefully shuts down the writeAheadLog by making sure that all pending
     writes are completed and synced to disk before then closing the WAL segment file.
     Any future writes after the WAL has been closed will lead to an error.
