@@ -24,3 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add Archive support
 
 [v0.3.0]: https://github.com/migzzi/waljs/releases/tag/v0.3.0
+
+## [v0.4.0] - 2024-11-18
+
+- Add Cumulative commit support.
+
+[v0.4.0]: https://github.com/migzzi/waljs/releases/tag/v0.4.0
